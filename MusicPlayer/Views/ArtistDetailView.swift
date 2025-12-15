@@ -13,8 +13,8 @@ struct ArtistDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 20) {
-                // Artist artwork
+            HStack(alignment: .top, spacing: 24) {
+                // Larger artist image with circular mask
                 Group {
                     if let artwork = artwork {
                         Image(nsImage: artwork)
@@ -28,29 +28,42 @@ struct ArtistDetailView: View {
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
                                 .foregroundStyle(.secondary.opacity(0.5))
-                                .padding(30)
+                                .padding(50)
                         }
                     }
                 }
-                .frame(width: 120, height: 120)
-                .cornerRadius(8)
-                .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
+                .frame(width: 200, height: 200)
+                .clipShape(Circle())
+                .shadow(color: .black.opacity(0.3), radius: 12, x: 0, y: 6)
 
                 // Artist info
-                VStack (alignment: .leading, spacing: 12) {
-                    Text("Artist")
+                VStack (alignment: .leading, spacing: 14) {
+                    // "ARTIST" label
+                    Text("ARTIST")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                        .fontWeight(.medium)
+                        .fontWeight(.semibold)
+                        .textCase(.uppercase)
 
+                    // Artist name
                     Text(artist.name)
-                        .font(.title)
+                        .font(.largeTitle)
                         .fontWeight(.bold)
                         .lineLimit(2)
 
-                    HStack {
+                    // Stats
+                    HStack(spacing: 8) {
+                        let albums = albumDAO.getByArtistId(artistId: artist.id)
+                        Text("\(albums.count) \(albums.count == 1 ? "album" : "albums")")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+
+                        Text("•")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+
                         if let tracksInfo = tracksInfo {
-                            Text("\(tracksInfo.trackCount) \(tracksInfo.trackCount == 1 ? "song" : "songs")")
+                            Text("\(tracksInfo.trackCount) \(tracksInfo.trackCount == 1 ? "track" : "tracks")")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
 
@@ -62,50 +75,91 @@ struct ArtistDetailView: View {
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                         } else {
-                            Text("\(artist.trackCount) \(artist.trackCount == 1 ? "song" : "songs")")
+                            Text("\(artist.trackCount) \(artist.trackCount == 1 ? "track" : "tracks")")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                         }
                     }
+                    .padding(.top, 4)
 
-                    HStack(spacing: 10) {
+                    // Action buttons
+                    HStack(spacing: 12) {
                         Button(action: { playArtist() }) {
-                            Image(systemName: Icons.playFill)
-                                .font(.system(size: 12))
-                            Text("Play")
-                                .font(.system(size: 13))
+                            HStack(spacing: 6) {
+                                Image(systemName: Icons.playFill)
+                                    .font(.system(size: 14))
+                                Text("Play All")
+                                    .font(.system(size: 14, weight: .semibold))
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 10)
                         }
+                        .buttonStyle(.borderedProminent)
+
+                        Button(action: { shuffleArtist() }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: Icons.shuffleFill)
+                                    .font(.system(size: 14))
+                                Text("Shuffle")
+                                    .font(.system(size: 14, weight: .semibold))
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 10)
+                        }
+                        .buttonStyle(.bordered)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .padding(6)
+                    .padding(.top, 8)
                 }
 
                 Spacer()
             }
             .background(.regularMaterial)
-            .padding(10)
+            .padding(16)
 
             // Artist albums/tracks view
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 24) {
                     if tracksInfo != nil {
                         // Display albums by this artist
                         let albums = albumDAO.getByArtistId(artistId: artist.id)
                         if !albums.isEmpty {
-                            Text("Albums")
-                                .font(.headline)
-                                .padding(.horizontal)
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Albums")
+                                    .font(.title2)
+                                    .fontWeight(.bold)
+                                    .padding(.horizontal)
 
-                            AlbumGrid(albums: albums, columnCount: 5)
-                                .padding(.horizontal)
+                                AlbumGrid(albums: albums, columnCount: 5)
+                                    .padding(.horizontal)
+                            }
+                        }
+
+                        // Display top tracks (most played)
+                        if let topTracks = getTopTracks(), !topTracks.isEmpty {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Top Tracks")
+                                    .font(.title2)
+                                    .fontWeight(.bold)
+                                    .padding(.horizontal)
+
+                                VStack(spacing: 0) {
+                                    ForEach(Array(topTracks.prefix(10).enumerated()), id: \.element.id) { index, track in
+                                        TrackRow(track: track, index: index + 1)
+                                            .background(Color(nsColor: .controlBackgroundColor).opacity(index % 2 == 0 ? 0 : 0.3))
+                                    }
+                                }
+                            }
                         }
 
                         // Display all tracks
-                        Text("All Songs")
-                            .font(.headline)
-                            .padding(.horizontal)
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("All Songs")
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .padding(.horizontal)
 
-                        ArtistSongsView(artist: artist)
+                            ArtistSongsView(artist: artist)
+                        }
                     } else {
                         ProgressView()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -143,6 +197,23 @@ struct ArtistDetailView: View {
 
         QueueManager.shared.setQueue(tracksInfo.tracks, startIndex: 0)
         PlayerManager.shared.play(track: tracksInfo.tracks[0])
+    }
+
+    private func shuffleArtist() {
+        guard let tracksInfo = tracksInfo, !tracksInfo.tracks.isEmpty else { return }
+
+        var shuffledTracks = tracksInfo.tracks
+        shuffledTracks.shuffle()
+        QueueManager.shared.setQueue(shuffledTracks, startIndex: 0)
+        QueueManager.shared.setShuffleEnabled(true)
+        PlayerManager.shared.play(track: shuffledTracks[0])
+    }
+
+    private func getTopTracks() -> [Track]? {
+        guard let tracksInfo = tracksInfo else { return nil }
+
+        // Sort tracks by play count (descending)
+        return tracksInfo.tracks.sorted { $0.playCount > $1.playCount }
     }
 }
 

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct NowPlayingView: View {
     @ObservedObject var nowPlaying = NowPlayingManager.shared
+    @State private var dominantColor: Color?
 
     var body: some View {
         ScrollView {
@@ -25,7 +26,20 @@ struct NowPlayingView: View {
             .padding()
         }
         .frame(minWidth: 280)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(
+            ZStack {
+                Color(nsColor: .controlBackgroundColor)
+                if let dominantColor = dominantColor {
+                    dominantColor.opacity(0.15)
+                }
+            }
+        )
+        .onChange(of: nowPlaying.artwork) { _, newArtwork in
+            updateDominantColor(from: newArtwork)
+        }
+        .onAppear {
+            updateDominantColor(from: nowPlaying.artwork)
+        }
     }
 
     // MARK: - Artwork Section
@@ -37,6 +51,7 @@ struct NowPlayingView: View {
                     .frame(width: 240, height: 240)
                     .background(Color.secondary.opacity(0.1))
                     .cornerRadius(8)
+                    .accessibilityLabel("Loading artwork")
             } else if let artwork = nowPlaying.artwork {
                 Image(nsImage: artwork)
                     .resizable()
@@ -44,6 +59,7 @@ struct NowPlayingView: View {
                     .frame(width: 240, height: 240)
                     .cornerRadius(8)
                     .shadow(color: .black.opacity(0.2), radius: 10, x: 0, y: 5)
+                    .accessibilityLabel("Album artwork for \(nowPlaying.currentTrack?.albumTitle ?? "current track")")
             } else {
                 Image(systemName: Icons.musicNote)
                     .resizable()
@@ -53,6 +69,7 @@ struct NowPlayingView: View {
                     .padding(40)
                     .background(Color.secondary.opacity(0.1))
                     .cornerRadius(8)
+                    .accessibilityLabel("No artwork available")
             }
         }
     }
@@ -66,11 +83,13 @@ struct NowPlayingView: View {
                 .fontWeight(.bold)
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
+                .accessibilityLabel("Track title: \(track.title)")
 
             Text(track.displayArtist)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+                .accessibilityLabel("Artist: \(track.displayArtist)")
 
             if let album = track.albumTitle {
                 Text(album)
@@ -78,6 +97,7 @@ struct NowPlayingView: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .italic()
+                    .accessibilityLabel("Album: \(album)")
             }
 
             // Additional info
@@ -86,12 +106,14 @@ struct NowPlayingView: View {
                     Label("\(year)", systemImage: "calendar")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .accessibilityLabel("Year: \(year)")
                 }
 
                 if let genre = track.genreName {
                     Label(genre, systemImage: "music.note")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .accessibilityLabel("Genre: \(genre)")
                 }
             }
             .padding(.top, 4)
@@ -191,5 +213,23 @@ struct NowPlayingView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func updateDominantColor(from artwork: NSImage?) {
+        guard let artwork = artwork else {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                dominantColor = nil
+            }
+            return
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let extractedColor = ColorExtractor.extractDominantColor(from: artwork)
+            DispatchQueue.main.async {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    dominantColor = extractedColor
+                }
+            }
+        }
     }
 }

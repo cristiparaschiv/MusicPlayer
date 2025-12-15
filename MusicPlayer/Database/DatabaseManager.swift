@@ -161,6 +161,18 @@ class DatabaseManager {
         );
         """
 
+        let createPlayHistoryTable = """
+        CREATE TABLE IF NOT EXISTS play_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            track_id INTEGER NOT NULL,
+            played_at REAL NOT NULL,
+            completed INTEGER DEFAULT 0,
+            FOREIGN KEY(track_id) REFERENCES tracks(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_play_history_track_id ON play_history(track_id);
+        CREATE INDEX IF NOT EXISTS idx_play_history_played_at ON play_history(played_at DESC);
+        """
+
         let tables = [
             createArtistsTable,
             createGenresTable,
@@ -169,7 +181,8 @@ class DatabaseManager {
             createTracksTable,
             createPlaylistsTable,
             createPlaylistTracksTable,
-            createLibraryPathsTable
+            createLibraryPathsTable,
+            createPlayHistoryTable
         ]
 
         for sql in tables {
@@ -228,7 +241,8 @@ class DatabaseManager {
 
             if sqlite3_prepare_v2(db, sql, -1, &statement, nil) != SQLITE_OK {
                 let error = String(cString: sqlite3_errmsg(db))
-                print("Error preparing query: \(error)")
+                print("[DatabaseManager] Error preparing query: \(error)")
+                print("[DatabaseManager] SQL: \(sql)")
                 return
             }
 

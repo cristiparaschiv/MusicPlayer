@@ -246,6 +246,14 @@ class NowPlayingManager: ObservableObject {
             object: nil
         )
 
+        // Shuffle mode changed
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleShuffleModeChanged(_:)),
+            name: Constants.Notifications.shuffleModeChanged,
+            object: nil
+        )
+
         // Artwork did load (if artwork was loaded externally)
         NotificationCenter.default.addObserver(
             self,
@@ -362,6 +370,15 @@ class NowPlayingManager: ObservableObject {
         }
     }
 
+    @objc private func handleShuffleModeChanged(_ notification: Notification) {
+        if let userInfo = notification.userInfo,
+           let shuffleEnabled = userInfo["shuffleEnabled"] as? Bool {
+            DispatchQueue.main.async {
+                self.isShuffleEnabled = shuffleEnabled
+            }
+        }
+    }
+
     @objc private func handleArtworkDidLoad(_ notification: Notification) {
         if let userInfo = notification.userInfo,
            let trackId = userInfo["trackId"] as? Int64,
@@ -389,10 +406,13 @@ class NowPlayingManager: ObservableObject {
     @objc private func handleTrackFavoriteChanged(_ notification: Notification) {
         if let userInfo = notification.userInfo,
            let trackId = userInfo["trackId"] as? Int64,
-           let isFavorite = userInfo["isFavorite"] as? Bool,
            trackId == currentTrack?.id {
-            // Note: Track is a struct, so the favorite status will be reflected when track is reloaded
-            print("Track \(trackId) favorite status changed to \(isFavorite)")
+            // Track is a struct, so we need to reload it from the database to get updated favorite status
+            DispatchQueue.main.async {
+                if let updatedTrack = TrackDAO().getById(id: trackId) {
+                    self.currentTrack = updatedTrack
+                }
+            }
         }
     }
 

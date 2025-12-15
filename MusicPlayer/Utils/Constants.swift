@@ -48,6 +48,7 @@ struct Constants {
         static let trackFavoriteChanged = Notification.Name("trackFavoriteChanged")
         static let queueDidChange = Notification.Name("queueDidChange")
         static let repeatModeChanged = Notification.Name("repeatModeChanged")
+        static let shuffleModeChanged = Notification.Name("shuffleModeChanged")
         static let libraryDidUpdate = Notification.Name("libraryDidUpdate")
         static let libraryPathsChanged = Notification.Name("libraryPathsChanged")
         static let playlistsChanged = Notification.Name("playlistsChanged")

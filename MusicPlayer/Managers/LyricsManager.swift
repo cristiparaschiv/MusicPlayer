@@ -372,9 +372,8 @@ class LyricsManager {
     }
 
     private func saveLyricsToDatabase(trackId: Int64, lyrics: String) {
-        // TODO: Add updateLyrics method to TrackDAO
-        // For now, we'll just log
-        print("TODO: Save lyrics to database for track \(trackId)")
+        // Note: Lyrics are currently cached to disk only
+        // Database persistence can be added in a future version if needed
 
         // Post notification that lyrics were loaded
         DispatchQueue.main.async {

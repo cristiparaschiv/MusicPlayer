@@ -1,14 +1,16 @@
 import Foundation
 import SFBAudioEngine
 import AVFoundation
+import CoreAudio
 
-class PlayerManager {
+class PlayerManager: NSObject {
     static let shared = PlayerManager()
 
-    // MARK: - Audio Engine
+    // MARK: - Audio Player
 
     private var audioPlayer: AudioPlayer?
     private var nextAudioPlayer: AudioPlayer? // For gapless playback
+    private var fadingOutPlayer: AudioPlayer? // For crossfade
 
     // MARK: - State
 
@@ -24,13 +26,16 @@ class PlayerManager {
 
     private var playbackTimer: Timer?
     private var crossfadeTimer: Timer?
+    private var isCrossfading: Bool = false
 
     private let trackDAO = TrackDAO()
+    private let playHistoryDAO = PlayHistoryDAO()
+    private var currentPlayHistoryId: Int64?
 
     // MARK: - Initialization
 
-    private init() {
-        setupAudioSession()
+    private override init() {
+        super.init()
         loadPersistedSettings()
         observeQueueManager()
     }
@@ -89,6 +94,12 @@ class PlayerManager {
         return _isCrossfadeEnabled
     }
 
+    var crossfadeDuration: TimeInterval {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return _crossfadeDuration
+    }
+
     var isGaplessEnabled: Bool {
         stateLock.lock()
         defer { stateLock.unlock() }
@@ -115,18 +126,17 @@ class PlayerManager {
             if self._playbackState == .paused, let player = self.audioPlayer {
                 // Resume playback
                 do {
-                    try player.play()
+                    try player.resume()
                     self._playbackState = .playing
                     self.stateLock.unlock()
 
                     self.notifyPlaybackStateChanged()
                     self.startPlaybackTimer()
-                    return
                 } catch {
                     print("Failed to resume playback: \(error)")
                     self.stateLock.unlock()
-                    return
                 }
+                return
             }
 
             // Start new playback
@@ -146,6 +156,16 @@ class PlayerManager {
     func play(track: Track) {
         playerQueue.async { [weak self] in
             guard let self = self else { return }
+
+            // Cleanup current playback
+            self.audioPlayer?.stop()
+            self.audioPlayer = nil
+
+            self.nextAudioPlayer?.stop()
+            self.nextAudioPlayer = nil
+
+            self.fadingOutPlayer?.stop()
+            self.fadingOutPlayer = nil
 
             // Set queue to single track if not already in queue
             if QueueManager.shared.indexOfTrack(track) == nil {
@@ -191,10 +211,19 @@ class PlayerManager {
 
             self.stateLock.lock()
 
+            // Stop all players
             self.audioPlayer?.stop()
             self.audioPlayer = nil
+
             self.nextAudioPlayer?.stop()
             self.nextAudioPlayer = nil
+
+            self.fadingOutPlayer?.stop()
+            self.fadingOutPlayer = nil
+
+            self.crossfadeTimer?.invalidate()
+            self.crossfadeTimer = nil
+            self.isCrossfading = false
 
             self._playbackState = .stopped
             self._currentTrack = nil
@@ -266,8 +295,16 @@ class PlayerManager {
 
             self.stateLock.lock()
             self._volume = clampedVolume
-            // Note: SFBAudioEngine AudioPlayer doesn't have direct volume control
-            // Volume would be controlled through system audio or AVAudioEngine
+
+            // Apply volume to AudioPlayer
+            if let player = self.audioPlayer {
+                do {
+                    try player.setVolume(clampedVolume)
+                } catch {
+                    print("Failed to set volume: \(error)")
+                }
+            }
+
             self.stateLock.unlock()
 
             UserDefaults.standard.set(clampedVolume, forKey: Constants.UserDefaultsKeys.volume)
@@ -300,15 +337,17 @@ class PlayerManager {
     }
 
     private func performSeekOnQueue(_ time: TimeInterval) {
-        guard audioPlayer != nil else { return }
+        guard let player = audioPlayer else { return }
 
         let duration = self.duration
         let clampedTime = min(max(0.0, time), duration)
 
-        // TODO: Implement seeking with SFBAudioEngine
-        // SFBAudioEngine AudioPlayer seeking needs to be properly implemented
-        // The AudioPlayer class may need different approach for seeking
-        print("Seek to \(clampedTime) requested - seeking functionality to be implemented")
+        // Seek using AudioPlayer
+        let seekSucceeded = player.seek(time: clampedTime)
+
+        if !seekSucceeded {
+            print("Seek failed: seeking not supported for this format")
+        }
 
         DispatchQueue.main.async {
             NotificationCenter.default.post(
@@ -465,18 +504,46 @@ class PlayerManager {
     private func playTrack(_ track: Track) {
         // Must be called from playerQueue
 
-        // Stop any existing playback
+        let shouldCrossfade = _isCrossfadeEnabled && audioPlayer != nil && audioPlayer!.isPlaying
+
+        if shouldCrossfade {
+            performCrossfadeToTrack(track)
+        } else {
+            performNormalTransitionToTrack(track)
+        }
+    }
+
+    private func performNormalTransitionToTrack(_ track: Track) {
+        // Cleanup any existing playback
         audioPlayer?.stop()
         audioPlayer = nil
+
+        fadingOutPlayer?.stop()
+        fadingOutPlayer = nil
+
+        nextAudioPlayer?.stop()
+        nextAudioPlayer = nil
+
+        crossfadeTimer?.invalidate()
+        crossfadeTimer = nil
+        isCrossfading = false
 
         // Create URL for the track
         let url = URL(fileURLWithPath: track.filePath)
 
-        // Try to create audio player
+        // Create new AudioPlayer
         let player = AudioPlayer()
 
         do {
+            // Setup completion callback BEFORE playing
+            player.delegate = self
+
+            // Play the track
             try player.play(url)
+
+            // Set volume after starting playback
+            try player.setVolume(_volume)
+
             audioPlayer = player
         } catch {
             print("Failed to start playback: \(error)")
@@ -491,6 +558,9 @@ class PlayerManager {
         _playbackState = .playing
         stateLock.unlock()
 
+        // Record play history immediately
+        currentPlayHistoryId = playHistoryDAO.recordPlay(trackId: track.id)
+
         // Update play count after a few seconds (to avoid counting skips)
         DispatchQueue.global().asyncAfter(deadline: .now() + 5.0) { [weak self] in
             guard let self = self,
@@ -501,66 +571,299 @@ class PlayerManager {
         }
 
         // Prepare next track for gapless playback
-        if _isGaplessEnabled {
+        if _isGaplessEnabled || _isCrossfadeEnabled {
             prepareNextTrack()
         }
-
-        // Setup completion handler
-        setupPlaybackCompletion()
 
         notifyPlaybackStateChanged()
         notifyCurrentTrackChanged()
         startPlaybackTimer()
     }
 
+    private func performCrossfadeToTrack(_ track: Track) {
+        // Must be called from playerQueue
+        guard let currentPlayer = audioPlayer else {
+            print("Crossfade - no existing player, falling back to normal transition")
+            performNormalTransitionToTrack(track)
+            return
+        }
+
+        print("===== CROSSFADE START =====")
+        print("Current track: \(_currentTrack?.title ?? "none")")
+        print("New track: \(track.title)")
+
+        // Get the crossfade duration
+        let duration = _crossfadeDuration
+
+        // Create URL for the new track
+        let url = URL(fileURLWithPath: track.filePath)
+
+        // Create a new AudioPlayer for the incoming track
+        let newPlayer = AudioPlayer()
+
+        do {
+            // Setup completion callbacks for the new player
+            newPlayer.delegate = self
+
+            // Start playback on the new player at zero volume
+            try newPlayer.play(url)
+
+            // Set volume to 0 after starting playback
+            try newPlayer.setVolume(0.0)
+
+            print("New player enqueued and playing at volume 0")
+
+            // Move current player to fading out
+            fadingOutPlayer = currentPlayer
+            audioPlayer = newPlayer
+
+            print("Starting crossfade timer - duration: \(duration) seconds")
+
+            // Perform volume ramping using a timer for smooth crossfade
+            let steps = 50 // Number of volume adjustments
+            let stepDuration = duration / Double(steps)
+
+            class CrossfadeState {
+                var currentStep = 0
+            }
+            let state = CrossfadeState()
+
+            crossfadeTimer?.invalidate()
+
+            // Schedule timer on main thread to ensure it fires reliably
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+
+                self.crossfadeTimer = Timer.scheduledTimer(withTimeInterval: stepDuration, repeats: true) { [weak self] timer in
+                    guard let self = self else {
+                        timer.invalidate()
+                        return
+                    }
+
+                    state.currentStep += 1
+                    let progress = Double(state.currentStep) / Double(steps)
+
+                    // Crossfade volumes: old fades out, new fades in
+                    let oldVolume = Float((1.0 - progress)) * self._volume
+                    let newVolume = Float(progress) * self._volume
+
+                    // Apply volumes to the players
+                    do {
+                        try currentPlayer.setVolume(oldVolume)
+                        try newPlayer.setVolume(newVolume)
+                    } catch {
+                        print("Failed to set crossfade volume: \(error)")
+                    }
+
+                    if state.currentStep == 1 {
+                        print("Crossfade step 1/\(steps) - new: \(newVolume), old: \(oldVolume)")
+                    } else if state.currentStep == steps / 2 {
+                        print("Crossfade step \(steps/2)/\(steps) (midpoint) - new: \(newVolume), old: \(oldVolume)")
+                    }
+
+                    if state.currentStep >= steps {
+                        // Crossfade complete
+                        timer.invalidate()
+                        self.crossfadeTimer = nil
+
+                        // Ensure final volumes are set
+                        do {
+                            try currentPlayer.setVolume(0.0)
+                            try newPlayer.setVolume(self._volume)
+                        } catch {
+                            print("Failed to set final crossfade volume: \(error)")
+                        }
+
+                        print("Crossfade timer completed - final volumes set")
+
+                        // Cleanup old player
+                        self.playerQueue.async { [weak self] in
+                            guard let self = self else { return }
+
+                            print("Cleaning up old player...")
+                            self.fadingOutPlayer?.stop()
+                            self.fadingOutPlayer = nil
+                            self.isCrossfading = false
+
+                            print("===== CROSSFADE END =====")
+                        }
+                    }
+                }
+
+                // Run the timer on the main run loop with common mode
+                RunLoop.main.add(self.crossfadeTimer!, forMode: .common)
+                print("Crossfade timer scheduled on main run loop")
+            }
+
+        } catch {
+            print("ERROR - Failed to start crossfade: \(error)")
+            // Fall back to normal transition
+            performNormalTransitionToTrack(track)
+            return
+        }
+
+        stateLock.lock()
+        _playbackState = .playing
+        stateLock.unlock()
+
+        // Record play history immediately
+        currentPlayHistoryId = playHistoryDAO.recordPlay(trackId: track.id)
+
+        // Update play count after a few seconds
+        DispatchQueue.global().asyncAfter(deadline: .now() + 5.0) { [weak self] in
+            guard let self = self,
+                  self._currentTrack?.id == track.id,
+                  self.isPlaying else { return }
+
+            self.trackDAO.updatePlayCount(trackId: track.id)
+        }
+
+        // Prepare next track
+        if _isGaplessEnabled || _isCrossfadeEnabled {
+            prepareNextTrack()
+        }
+
+        notifyCurrentTrackChanged()
+    }
+
     private func prepareNextTrack() {
         // Must be called from playerQueue
-        guard let nextTrack = QueueManager.shared.peekNext() else { return }
+        guard _isGaplessEnabled || _isCrossfadeEnabled else { return }
+        guard let nextTrack = QueueManager.shared.peekNext() else {
+            nextAudioPlayer?.stop()
+            nextAudioPlayer = nil
+            return
+        }
+
+        // Don't prepare if we're in repeat one mode (same track)
+        if QueueManager.shared.repeatMode == .one {
+            nextAudioPlayer?.stop()
+            nextAudioPlayer = nil
+            return
+        }
 
         let url = URL(fileURLWithPath: nextTrack.filePath)
 
-        // Try to create next audio player
+        // Clean up previous next player
+        nextAudioPlayer?.stop()
+        nextAudioPlayer = nil
+
+        // Try to create and prepare next audio player
         let nextPlayer = AudioPlayer()
+
         do {
+            // For gapless playback, we pre-load the next track
             try nextPlayer.play(url)
-            nextPlayer.pause()
+            nextPlayer.pause() // Pause immediately after loading
+
+            // Set volume to 0
+            try nextPlayer.setVolume(0.0)
+
             nextAudioPlayer = nextPlayer
-            print("Prepared next track: \(nextTrack.title)")
+            print("Prepared next track for gapless/crossfade: \(nextTrack.title)")
         } catch {
             print("Failed to prepare next track: \(error)")
+            nextAudioPlayer = nil
         }
     }
 
-    private func setupPlaybackCompletion() {
-        // Use a timer to check for completion
-        // SFBAudioEngine doesn't have a direct completion callback in the same way
-        // We'll need to monitor the playback state
-        playerQueue.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            self?.checkPlaybackCompletion()
-        }
-    }
 
-    private func checkPlaybackCompletion() {
-        guard let player = audioPlayer else { return }
+    private func handleTrackNearingCompletion() {
+        // Must be called from playerQueue
 
-        if !player.isPlaying && _playbackState == .playing {
-            // Playback completed
-            handleTrackCompletion()
-        } else if _playbackState == .playing {
-            // Still playing, check again
-            playerQueue.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.checkPlaybackCompletion()
+        // Check if crossfade is enabled and should start early
+        if _isCrossfadeEnabled && !isCrossfading && QueueManager.shared.hasNext {
+            isCrossfading = true
+            // Use peekNext() to see what's coming WITHOUT advancing the queue
+            // Then call next() to advance the queue and get the actual track to play
+            if let nextTrack = QueueManager.shared.peekNext() {
+                // Now advance the queue to make this the current track
+                _ = QueueManager.shared.next()
+                stateLock.lock()
+                _currentTrack = nextTrack
+                stateLock.unlock()
+                performCrossfadeToTrack(nextTrack)
+                return
             }
+        }
+
+        // For gapless playback, transition to next track
+        if _isGaplessEnabled && QueueManager.shared.hasNext {
+            handleTrackCompletion()
+        } else if QueueManager.shared.hasNext {
+            // Normal transition
+            handleTrackCompletion()
+        } else {
+            // No more tracks, stop playback
+            stop()
         }
     }
 
     private func handleTrackCompletion() {
         // Track finished playing, move to next
+        // Must be called from playerQueue
+
         if QueueManager.shared.hasNext {
-            next()
+            if _isGaplessEnabled && nextAudioPlayer != nil {
+                // Use pre-buffered next track for gapless transition
+                performGaplessTransition()
+            } else {
+                // Normal transition to next track
+                next()
+            }
         } else {
+            // No more tracks, stop playback
             stop()
         }
+    }
+
+    private func performGaplessTransition() {
+        // Must be called from playerQueue
+        guard let preparedNextPlayer = nextAudioPlayer,
+              let nextTrack = QueueManager.shared.next() else {
+            next()
+            return
+        }
+
+        // Stop current player
+        audioPlayer?.stop()
+
+        // Switch to prepared next player
+        do {
+            try preparedNextPlayer.setVolume(_volume)
+            try preparedNextPlayer.resume()
+        } catch {
+            print("Failed to resume prepared player: \(error)")
+            next()
+            return
+        }
+
+        audioPlayer = preparedNextPlayer
+        nextAudioPlayer = nil
+
+        stateLock.lock()
+        _currentTrack = nextTrack
+        _playbackState = .playing
+        stateLock.unlock()
+
+        // Record play history immediately
+        currentPlayHistoryId = playHistoryDAO.recordPlay(trackId: nextTrack.id)
+
+        // Update play count after a few seconds
+        DispatchQueue.global().asyncAfter(deadline: .now() + 5.0) { [weak self] in
+            guard let self = self,
+                  self._currentTrack?.id == nextTrack.id,
+                  self.isPlaying else { return }
+
+            self.trackDAO.updatePlayCount(trackId: nextTrack.id)
+        }
+
+        // Prepare the next track in the queue
+        if _isGaplessEnabled || _isCrossfadeEnabled {
+            prepareNextTrack()
+        }
+
+        notifyCurrentTrackChanged()
     }
 
     // MARK: - Private Methods - Timers
@@ -590,19 +893,27 @@ class PlayerManager {
 
     // MARK: - Private Methods - Setup
 
-    private func setupAudioSession() {
-        // Configure AVAudioSession for macOS
-        // Most audio session configuration is automatic on macOS
-    }
-
     private func loadPersistedSettings() {
         _volume = UserDefaults.standard.float(forKey: Constants.UserDefaultsKeys.volume)
         if _volume == 0 {
             _volume = Constants.defaultVolume
         }
 
-        _isCrossfadeEnabled = UserDefaults.standard.bool(forKey: Constants.UserDefaultsKeys.crossfadeEnabled)
-        _isGaplessEnabled = UserDefaults.standard.bool(forKey: Constants.UserDefaultsKeys.gaplessPlaybackEnabled)
+        // Crossfade should default to enabled
+        if UserDefaults.standard.object(forKey: Constants.UserDefaultsKeys.crossfadeEnabled) != nil {
+            _isCrossfadeEnabled = UserDefaults.standard.bool(forKey: Constants.UserDefaultsKeys.crossfadeEnabled)
+        } else {
+            _isCrossfadeEnabled = true
+            UserDefaults.standard.set(true, forKey: Constants.UserDefaultsKeys.crossfadeEnabled)
+        }
+
+        // Gapless playback should default to enabled
+        if UserDefaults.standard.object(forKey: Constants.UserDefaultsKeys.gaplessPlaybackEnabled) != nil {
+            _isGaplessEnabled = UserDefaults.standard.bool(forKey: Constants.UserDefaultsKeys.gaplessPlaybackEnabled)
+        } else {
+            _isGaplessEnabled = true
+            UserDefaults.standard.set(true, forKey: Constants.UserDefaultsKeys.gaplessPlaybackEnabled)
+        }
 
         if let duration = UserDefaults.standard.object(forKey: Constants.UserDefaultsKeys.crossfadeDuration) as? TimeInterval {
             _crossfadeDuration = duration
@@ -655,6 +966,39 @@ class PlayerManager {
                 name: Constants.Notifications.trackDidChange,
                 object: nil
             )
+        }
+    }
+}
+
+// MARK: - AudioPlayerDelegate
+
+extension PlayerManager: AudioPlayer.Delegate {
+    func audioPlayer(_ audioPlayer: AudioPlayer, renderingComplete decoder: any PCMDecoding) {
+        print("Track rendering complete")
+
+        // Mark play as completed if >80% of track was played
+        if let playId = currentPlayHistoryId, let track = currentTrack {
+            let currentTime = self.currentTime
+            let duration = track.duration
+            if duration > 0 && currentTime / duration > 0.8 {
+                playHistoryDAO.markCompleted(playId: playId)
+            }
+        }
+
+        // Dispatch to playerQueue for thread-safe state management
+        playerQueue.async { [weak self] in
+            self?.handleTrackNearingCompletion()
+        }
+    }
+
+    func audioPlayer(_ audioPlayer: AudioPlayer, encounteredError error: Error) {
+        print("Asynchronous playback error: \(error)")
+
+        playerQueue.async { [weak self] in
+            guard let self = self else { return }
+
+            // On error, try to skip to next track
+            self.next()
         }
     }
 }

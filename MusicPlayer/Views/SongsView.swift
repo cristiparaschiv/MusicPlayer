@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct SongsView: View {
     @State private var tracks: [Track] = []
@@ -48,6 +49,9 @@ struct SongsView: View {
             .onChange(of: sortOrder) { _, newOrder in
                 applySorting(newOrder)
             }
+            .onTableDoubleClick {
+                handleDoubleClick()
+            }
         }
         .onAppear {
             loadTracks()
@@ -58,10 +62,6 @@ struct SongsView: View {
         .onReceive(NotificationCenter.default.publisher(for: Constants.Notifications.trackFavoriteChanged)) { _ in
             // Reload to update favorite icons
             loadTracks()
-        }
-        // Handle double-click
-        .onTapGesture(count: 2) {
-            handleDoubleClick()
         }
     }
 
@@ -96,10 +96,6 @@ struct SongsView: View {
 
             Button("Show in Finder") {
                 showInFinder(track: track)
-            }
-
-            Button("Get Info") {
-                // TODO: Show track info
             }
         }
     }
@@ -191,18 +187,10 @@ struct SongsView: View {
     }
 
     private func playTrack(_ track: Track) {
-        // If queue is empty, set queue with selected track and following tracks
-        if QueueManager.shared.isEmpty {
-            // Get the index of the selected track in sorted list
-            if let index = sortedTracks.firstIndex(where: { $0.id == track.id }) {
-                // Set queue with all tracks from this point forward
-                let queueTracks = Array(sortedTracks[index...])
-                QueueManager.shared.setQueue(queueTracks, startIndex: 0)
-                PlayerManager.shared.play(track: track)
-            }
-        } else {
-            // Queue has tracks, just play this track immediately
-            QueueManager.shared.setQueue([track], startIndex: 0)
+        // Get the index of the selected track in sorted list
+        if let index = sortedTracks.firstIndex(where: { $0.id == track.id }) {
+            // Set queue with all tracks starting from the selected track
+            QueueManager.shared.setQueue(sortedTracks, startIndex: index)
             PlayerManager.shared.play(track: track)
         }
     }
@@ -237,14 +225,7 @@ struct SongsView: View {
 
     private var titleColumn: some TableColumnContent<Track, KeyPathComparator<Track>> {
         TableColumn("Title", value: \.title) { track in
-            HStack(spacing: 8) {
-                if track.isFavorite {
-                    Image(systemName: Icons.starFill)
-                        .foregroundColor(.yellow)
-                        .font(.caption)
-                }
-                Text(track.title)
-            }
+            Text(track.title)
         }
         .width(min: 150, ideal: 250)
     }

@@ -58,8 +58,12 @@ class AlbumDAO {
         """
 
         let searchTerm = "%\(query)%"
+        print("[AlbumDAO] Searching with term: '\(searchTerm)'")
         let results = db.query(sql: sql, parameters: [searchTerm, searchTerm, limit])
-        return results.map { rowToAlbum($0) }
+        print("[AlbumDAO] Query returned \(results.count) rows")
+        let albums = results.map { rowToAlbum($0) }
+        print("[AlbumDAO] Mapped to \(albums.count) albums")
+        return albums
     }
 
     func getRecentlyAdded(limit: Int = 20) -> [Album] {

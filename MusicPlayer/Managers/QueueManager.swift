@@ -479,6 +479,7 @@ class QueueManager {
             self.persistState()
             self.notifyQueueChanged()
             self.notifyCurrentTrackChanged()
+            self.notifyShuffleModeChanged()
         }
     }
 
@@ -606,6 +607,16 @@ class QueueManager {
                 name: Constants.Notifications.trackDidChange,
                 object: nil,
                 userInfo: ["trackIndex": self.currentIndex]
+            )
+        }
+    }
+
+    private func notifyShuffleModeChanged() {
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: Constants.Notifications.shuffleModeChanged,
+                object: nil,
+                userInfo: ["shuffleEnabled": self._isShuffleEnabled]
             )
         }
     }

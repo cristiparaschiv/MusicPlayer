@@ -45,8 +45,12 @@ class ArtistDAO {
         """
 
         let searchTerm = "%\(query)%"
+        print("[ArtistDAO] Searching with term: '\(searchTerm)'")
         let results = db.query(sql: sql, parameters: [searchTerm, limit])
-        return results.map { rowToArtist($0) }
+        print("[ArtistDAO] Query returned \(results.count) rows")
+        let artists = results.map { rowToArtist($0) }
+        print("[ArtistDAO] Mapped to \(artists.count) artists")
+        return artists
     }
 
     func getTopArtists(limit: Int = 20) -> [Artist] {

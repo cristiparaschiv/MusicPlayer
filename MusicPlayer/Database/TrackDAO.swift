@@ -117,8 +117,12 @@ class TrackDAO {
         """
 
         let searchTerm = "%\(query)%"
+        print("[TrackDAO] Searching with term: '\(searchTerm)'")
         let results = db.query(sql: sql, parameters: [searchTerm, searchTerm, searchTerm, limit])
-        return results.map { rowToTrack($0) }
+        print("[TrackDAO] Query returned \(results.count) rows")
+        let tracks = results.map { rowToTrack($0) }
+        print("[TrackDAO] Mapped to \(tracks.count) tracks")
+        return tracks
     }
 
     func getRecentlyAdded(limit: Int = 20) -> [Track] {

@@ -18,8 +18,6 @@ class PlaylistMenuHelper {
             object: nil,
             userInfo: ["playlistId": playlist.id]
         )
-
-        print("Added \(tracks.count) track(s) to \(playlist.name)")
     }
 
     func createPlaylistAndAdd(name: String, tracks: [Track]) {
@@ -37,8 +35,6 @@ class PlaylistMenuHelper {
             object: nil,
             userInfo: ["playlistId": playlistId]
         )
-
-        print("Created playlist '\(name)' and added \(tracks.count) track(s)")
     }
 
     func showCreatePlaylistDialog(tracks: [Track]) {

@@ -128,11 +128,6 @@ struct ArtistGridItem: View {
                 playNext()
             }
 
-            Divider()
-
-            Button("Show Album Info") {
-                // TODO: Show album detail view
-            }
         }
     }
 

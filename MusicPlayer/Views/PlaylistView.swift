@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct PlaylistView: View {
     let playlist: Playlist?  // nil for Favorites
@@ -154,7 +155,7 @@ struct PlaylistView: View {
                 .onChange(of: sortOrder) { _, newOrder in
                     applySorting(newOrder)
                 }
-                .onTapGesture(count: 2) {
+                .onTableDoubleClick {
                     handleDoubleClick()
                 }
             }
@@ -283,18 +284,15 @@ struct PlaylistView: View {
               let track = sortedTracks.first(where: { $0.id == selectedId }) else {
             return
         }
+
         playTrack(track)
     }
 
     private func playTrack(_ track: Track) {
-        if QueueManager.shared.isEmpty {
-            if let index = sortedTracks.firstIndex(where: { $0.id == track.id }) {
-                let queueTracks = Array(sortedTracks[index...])
-                QueueManager.shared.setQueue(queueTracks, startIndex: 0)
-                PlayerManager.shared.play(track: track)
-            }
-        } else {
-            QueueManager.shared.setQueue([track], startIndex: 0)
+        // Get the index of the selected track in sorted list
+        if let index = sortedTracks.firstIndex(where: { $0.id == track.id }) {
+            // Set queue with all tracks starting from the selected track
+            QueueManager.shared.setQueue(sortedTracks, startIndex: index)
             PlayerManager.shared.play(track: track)
         }
     }
@@ -413,14 +411,7 @@ struct PlaylistView: View {
 
     private var titleColumn: some TableColumnContent<Track, KeyPathComparator<Track>> {
         TableColumn("Title", value: \.title) { track in
-            HStack(spacing: 8) {
-                if track.isFavorite {
-                    Image(systemName: Icons.starFill)
-                        .foregroundColor(.yellow)
-                        .font(.caption)
-                }
-                Text(track.title)
-            }
+            Text(track.title)
         }
         .width(min: 150, ideal: 250)
     }
@@ -463,3 +454,4 @@ struct PlaylistView: View {
         .width(min: 60, ideal: 80, max: 90)
     }
 }
+
