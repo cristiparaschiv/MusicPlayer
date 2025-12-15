@@ -14,6 +14,11 @@ struct SettingsView: View {
     @State private var crossfadeDuration: Double = 3.0
     @State private var isGaplessEnabled: Bool = false
 
+    // Cache management
+    @State private var showClearCacheAlert: Bool = false
+    @State private var cacheSize: String = "Calculating..."
+    @State private var isClearingCache: Bool = false
+
     @ObservedObject private var audioOutputManager = AudioOutputManager.shared
 
     @Environment(\.dismiss)
@@ -65,7 +70,9 @@ struct SettingsView: View {
                 )
                 .focusable(false)
             }
-            .padding(10)
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 10)
 
             Divider()
 
@@ -81,11 +88,12 @@ struct SettingsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(minWidth: 500, idealWidth: 600, maxWidth: 800,
-               minHeight: 500, idealHeight: 620, maxHeight: 900)
+        .frame(minWidth: 550, idealWidth: 600, maxWidth: 800,
+               minHeight: 580, idealHeight: 650, maxHeight: 900)
         .onAppear {
             loadData()
             loadPlaybackSettings()
+            calculateCacheSize()
         }
         .onReceive(NotificationCenter.default.publisher(for: Constants.Notifications.libraryPathsChanged)) { _ in
             loadData()
@@ -202,6 +210,54 @@ struct SettingsView: View {
             .padding()
             .background(Color(nsColor: .controlBackgroundColor))
             .cornerRadius(8)
+
+            // Storage Section
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Storage")
+                    .font(.headline)
+                    .padding(.bottom, 4)
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Cache Size:")
+                            .font(.subheadline)
+
+                        Text("Artwork and lyrics cache")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
+                    Spacer()
+
+                    Text(cacheSize)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+
+                    Button(action: { showClearCacheAlert = true }) {
+                        if isClearingCache {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                                .frame(width: 80)
+                        } else {
+                            Text("Clear Cache")
+                                .frame(width: 80)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isClearingCache)
+                }
+            }
+            .padding()
+            .background(Color(nsColor: .controlBackgroundColor))
+            .cornerRadius(8)
+            .alert("Clear Cache", isPresented: $showClearCacheAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Clear", role: .destructive) {
+                    clearCache()
+                }
+            } message: {
+                Text("This will delete all cached artwork and lyrics. They will be re-downloaded when needed.")
+            }
 
             Spacer()
         }
@@ -514,6 +570,74 @@ struct SettingsView: View {
             MediaScannerManager.shared.fullRescan()
             DispatchQueue.main.async {
                 isScanning = false
+            }
+        }
+    }
+
+    // MARK: - Cache Management
+
+    private func calculateCacheSize() {
+        DispatchQueue.global(qos: .utility).async {
+            let fileManager = FileManager.default
+            var totalSize: Int64 = 0
+
+            // Calculate artwork cache size
+            let artworkCacheDir = fileManager.cacheDirectory(for: Constants.artworkCacheDirectory)
+            totalSize += directorySize(at: artworkCacheDir)
+
+            // Calculate lyrics cache size
+            let lyricsCacheDir = fileManager.cacheDirectory(for: Constants.lyricsCacheDirectory)
+            totalSize += directorySize(at: lyricsCacheDir)
+
+            let formattedSize = formatBytes(totalSize)
+
+            DispatchQueue.main.async {
+                cacheSize = formattedSize
+            }
+        }
+    }
+
+    private func directorySize(at url: URL) -> Int64 {
+        let fileManager = FileManager.default
+        var size: Int64 = 0
+
+        guard let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey], options: [.skipsHiddenFiles]) else {
+            return 0
+        }
+
+        for case let fileURL as URL in enumerator {
+            do {
+                let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey])
+                size += Int64(resourceValues.fileSize ?? 0)
+            } catch {
+                continue
+            }
+        }
+
+        return size
+    }
+
+    private func formatBytes(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
+    }
+
+    private func clearCache() {
+        isClearingCache = true
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            // Clear artwork cache
+            ArtworkManager.shared.clearAllCaches()
+
+            // Clear lyrics cache
+            LyricsManager.shared.clearAllCaches()
+
+            DispatchQueue.main.async {
+                isClearingCache = false
+                // Recalculate cache size
+                calculateCacheSize()
             }
         }
     }

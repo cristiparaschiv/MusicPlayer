@@ -24,6 +24,10 @@ class PlayerManager: NSObject {
     private let stateLock = NSLock()
     private let playerQueue = DispatchQueue(label: "com.orangemusicplayer.player", qos: .userInitiated)
 
+    // Keep references to players being cleaned up to prevent premature deallocation
+    private var playersBeingCleaned: [AudioPlayer] = []
+    private let cleanupLock = NSLock()
+
     private var playbackTimer: Timer?
     private var crossfadeTimer: Timer?
     private var isCrossfading: Bool = false
@@ -157,14 +161,14 @@ class PlayerManager: NSObject {
         playerQueue.async { [weak self] in
             guard let self = self else { return }
 
-            // Cleanup current playback
-            self.audioPlayer?.stop()
+            // Cleanup current playback safely
+            self.safeCleanupPlayer(self.audioPlayer)
             self.audioPlayer = nil
 
-            self.nextAudioPlayer?.stop()
+            self.safeCleanupPlayer(self.nextAudioPlayer)
             self.nextAudioPlayer = nil
 
-            self.fadingOutPlayer?.stop()
+            self.safeCleanupPlayer(self.fadingOutPlayer)
             self.fadingOutPlayer = nil
 
             // Set queue to single track if not already in queue
@@ -209,20 +213,24 @@ class PlayerManager: NSObject {
         playerQueue.async { [weak self] in
             guard let self = self else { return }
 
+            // Invalidate timers first
+            DispatchQueue.main.async {
+                self.crossfadeTimer?.invalidate()
+                self.crossfadeTimer = nil
+            }
+
             self.stateLock.lock()
 
-            // Stop all players
-            self.audioPlayer?.stop()
+            // Stop all players safely
+            self.safeCleanupPlayer(self.audioPlayer)
             self.audioPlayer = nil
 
-            self.nextAudioPlayer?.stop()
+            self.safeCleanupPlayer(self.nextAudioPlayer)
             self.nextAudioPlayer = nil
 
-            self.fadingOutPlayer?.stop()
+            self.safeCleanupPlayer(self.fadingOutPlayer)
             self.fadingOutPlayer = nil
 
-            self.crossfadeTimer?.invalidate()
-            self.crossfadeTimer = nil
             self.isCrossfading = false
 
             self._playbackState = .stopped
@@ -499,6 +507,33 @@ class PlayerManager: NSObject {
         return trackDAO.getById(id: track.id)?.playCount ?? 0
     }
 
+    // MARK: - Private Methods - Player Cleanup
+
+    /// Safely cleanup an AudioPlayer by stopping it and delaying deallocation
+    /// This prevents crashes from internal AudioPlayerNode threads accessing freed memory
+    private func safeCleanupPlayer(_ player: AudioPlayer?) {
+        guard let player = player else { return }
+
+        // Stop the player first
+        player.stop()
+
+        // Keep a strong reference to prevent immediate deallocation
+        cleanupLock.lock()
+        playersBeingCleaned.append(player)
+        cleanupLock.unlock()
+
+        // Delay cleanup to allow internal threads to finish
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self = self else { return }
+
+            self.cleanupLock.lock()
+            self.playersBeingCleaned.removeAll { $0 === player }
+            self.cleanupLock.unlock()
+
+            // Player will be deallocated here after the delay
+        }
+    }
+
     // MARK: - Private Methods - Playback
 
     private func playTrack(_ track: Track) {
@@ -514,18 +549,20 @@ class PlayerManager: NSObject {
     }
 
     private func performNormalTransitionToTrack(_ track: Track) {
-        // Cleanup any existing playback
-        audioPlayer?.stop()
+        // Cleanup any existing playback safely
+        safeCleanupPlayer(audioPlayer)
         audioPlayer = nil
 
-        fadingOutPlayer?.stop()
+        safeCleanupPlayer(fadingOutPlayer)
         fadingOutPlayer = nil
 
-        nextAudioPlayer?.stop()
+        safeCleanupPlayer(nextAudioPlayer)
         nextAudioPlayer = nil
 
-        crossfadeTimer?.invalidate()
-        crossfadeTimer = nil
+        DispatchQueue.main.async { [weak self] in
+            self?.crossfadeTimer?.invalidate()
+            self?.crossfadeTimer = nil
+        }
         isCrossfading = false
 
         // Create URL for the track
@@ -583,14 +620,10 @@ class PlayerManager: NSObject {
     private func performCrossfadeToTrack(_ track: Track) {
         // Must be called from playerQueue
         guard let currentPlayer = audioPlayer else {
-            print("Crossfade - no existing player, falling back to normal transition")
             performNormalTransitionToTrack(track)
             return
         }
 
-        print("===== CROSSFADE START =====")
-        print("Current track: \(_currentTrack?.title ?? "none")")
-        print("New track: \(track.title)")
 
         // Get the crossfade duration
         let duration = _crossfadeDuration
@@ -611,13 +644,11 @@ class PlayerManager: NSObject {
             // Set volume to 0 after starting playback
             try newPlayer.setVolume(0.0)
 
-            print("New player enqueued and playing at volume 0")
 
             // Move current player to fading out
             fadingOutPlayer = currentPlayer
             audioPlayer = newPlayer
 
-            print("Starting crossfade timer - duration: \(duration) seconds")
 
             // Perform volume ramping using a timer for smooth crossfade
             let steps = 50 // Number of volume adjustments
@@ -655,12 +686,6 @@ class PlayerManager: NSObject {
                         print("Failed to set crossfade volume: \(error)")
                     }
 
-                    if state.currentStep == 1 {
-                        print("Crossfade step 1/\(steps) - new: \(newVolume), old: \(oldVolume)")
-                    } else if state.currentStep == steps / 2 {
-                        print("Crossfade step \(steps/2)/\(steps) (midpoint) - new: \(newVolume), old: \(oldVolume)")
-                    }
-
                     if state.currentStep >= steps {
                         // Crossfade complete
                         timer.invalidate()
@@ -674,29 +699,25 @@ class PlayerManager: NSObject {
                             print("Failed to set final crossfade volume: \(error)")
                         }
 
-                        print("Crossfade timer completed - final volumes set")
-
-                        // Cleanup old player
+                        // Cleanup old player safely
                         self.playerQueue.async { [weak self] in
                             guard let self = self else { return }
 
-                            print("Cleaning up old player...")
-                            self.fadingOutPlayer?.stop()
+                            self.safeCleanupPlayer(self.fadingOutPlayer)
                             self.fadingOutPlayer = nil
                             self.isCrossfading = false
-
-                            print("===== CROSSFADE END =====")
                         }
                     }
                 }
 
                 // Run the timer on the main run loop with common mode
                 RunLoop.main.add(self.crossfadeTimer!, forMode: .common)
-                print("Crossfade timer scheduled on main run loop")
             }
 
         } catch {
             print("ERROR - Failed to start crossfade: \(error)")
+            // Clean up the failed new player if it exists
+            safeCleanupPlayer(newPlayer)
             // Fall back to normal transition
             performNormalTransitionToTrack(track)
             return
@@ -730,22 +751,22 @@ class PlayerManager: NSObject {
         // Must be called from playerQueue
         guard _isGaplessEnabled || _isCrossfadeEnabled else { return }
         guard let nextTrack = QueueManager.shared.peekNext() else {
-            nextAudioPlayer?.stop()
+            safeCleanupPlayer(nextAudioPlayer)
             nextAudioPlayer = nil
             return
         }
 
         // Don't prepare if we're in repeat one mode (same track)
         if QueueManager.shared.repeatMode == .one {
-            nextAudioPlayer?.stop()
+            safeCleanupPlayer(nextAudioPlayer)
             nextAudioPlayer = nil
             return
         }
 
         let url = URL(fileURLWithPath: nextTrack.filePath)
 
-        // Clean up previous next player
-        nextAudioPlayer?.stop()
+        // Clean up previous next player safely
+        safeCleanupPlayer(nextAudioPlayer)
         nextAudioPlayer = nil
 
         // Try to create and prepare next audio player
@@ -760,7 +781,6 @@ class PlayerManager: NSObject {
             try nextPlayer.setVolume(0.0)
 
             nextAudioPlayer = nextPlayer
-            print("Prepared next track for gapless/crossfade: \(nextTrack.title)")
         } catch {
             print("Failed to prepare next track: \(error)")
             nextAudioPlayer = nil
@@ -825,8 +845,8 @@ class PlayerManager: NSObject {
             return
         }
 
-        // Stop current player
-        audioPlayer?.stop()
+        // Stop current player safely
+        safeCleanupPlayer(audioPlayer)
 
         // Switch to prepared next player
         do {
@@ -974,7 +994,6 @@ class PlayerManager: NSObject {
 
 extension PlayerManager: AudioPlayer.Delegate {
     func audioPlayer(_ audioPlayer: AudioPlayer, renderingComplete decoder: any PCMDecoding) {
-        print("Track rendering complete")
 
         // Mark play as completed if >80% of track was played
         if let playId = currentPlayHistoryId, let track = currentTrack {

@@ -2,14 +2,16 @@ import SwiftUI
 
 struct AlbumGrid: View {
     let albums: [Album]?
-    let columns: [GridItem]
+
+    // Use adaptive columns that automatically adjust based on available width
+    // Each item is ~180px wide, so this ensures proper spacing without overlap
+    private let columns = [GridItem(.adaptive(minimum: 180, maximum: 220), spacing: 16)]
 
     @State private var allAlbums: [Album] = []
     private let albumDAO = AlbumDAO()
 
-    init(albums: [Album]? = nil, columnCount: Int = 5) {
+    init(albums: [Album]? = nil) {
         self.albums = albums
-        self.columns = Array(repeating: GridItem(.flexible(), spacing: 16), count: columnCount)
     }
 
     var body: some View {

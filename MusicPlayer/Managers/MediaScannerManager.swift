@@ -34,7 +34,7 @@ class MediaScannerManager {
         return (results.first?["COUNT(*)"] as? Int64) ?? 0 == 0
     }
     
-    func addLibraryPath(_ path: String) {
+    func addLibraryPath(_ path: String, triggerScan: Bool = true) {
         let db = DatabaseManager.shared
         let sql = "INSERT OR IGNORE INTO library_paths (path, date_added) VALUES (?, ?)"
         db.execute(sql: sql, parameters: [path, Date().timeIntervalSince1970])
@@ -44,6 +44,11 @@ class MediaScannerManager {
 
         // Post notification that library paths changed
         NotificationCenter.default.post(name: Constants.Notifications.libraryPathsChanged, object: nil)
+
+        // Automatically scan for music files if requested
+        if triggerScan {
+            scanForChanges()
+        }
     }
     
     func getLibraryPaths() -> [String] {

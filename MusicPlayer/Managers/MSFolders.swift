@@ -13,18 +13,22 @@ extension MediaScannerManager {
         openPanel.begin { response in
             guard response == .OK else { return }
 
-            // Handle multiple selected folders
-            for url in openPanel.urls {
+            let urls = openPanel.urls
+            guard !urls.isEmpty else { return }
+
+            // Handle multiple selected folders - add all paths first without scanning
+            for url in urls {
                 // Create security-scoped bookmark for persistent access
                 if SecurityBookmarkManager.shared.createBookmark(for: url) {
-                    print("✅ Security bookmark created for: \(url.path)")
-                    MediaScannerManager.shared.addLibraryPath(url.path)
+                    MediaScannerManager.shared.addLibraryPath(url.path, triggerScan: false)
                 } else {
-                    print("⚠️ Failed to create security bookmark for: \(url.path)")
                     // Still add the path, but access may fail on restart
-                    MediaScannerManager.shared.addLibraryPath(url.path)
+                    MediaScannerManager.shared.addLibraryPath(url.path, triggerScan: false)
                 }
             }
+
+            // Trigger a single scan after all paths have been added
+            MediaScannerManager.shared.scanForChanges()
         }
     }
 }

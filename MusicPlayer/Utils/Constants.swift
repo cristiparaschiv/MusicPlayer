@@ -131,10 +131,10 @@ enum Icons {
     static let sortAscending = "sort.ascending"
     static let sortDescending = "sort.descending"
     
-    // Custom Icons (from project assets)
-    static let customLossless = "custom.lossless"
-    static let customMusicNoteRectangleStack = "custom.music.note.rectangle.stack"
-    static let customMusicNoteRectangleStackFill = "custom.music.note.rectangle.stack.fill"
+    // Library Icons (using SF Symbols)
+    static let customLossless = "waveform"
+    static let customMusicNoteRectangleStack = "rectangle.stack"
+    static let customMusicNoteRectangleStackFill = "rectangle.stack.fill"
 }
 
 

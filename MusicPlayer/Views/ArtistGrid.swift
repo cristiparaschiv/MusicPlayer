@@ -2,14 +2,15 @@ import SwiftUI
 
 struct ArtistGrid: View {
     let artists: [Artist]?
-    let columns: [GridItem]
+
+    // Use adaptive columns that automatically adjust based on available width
+    private let columns = [GridItem(.adaptive(minimum: 180, maximum: 220), spacing: 16)]
 
     @State private var allArtists: [Artist] = []
     private let artistDAO = ArtistDAO()
 
-    init(artist: [Artist]? = nil, columnCount: Int = 5) {
-        self.artists = artist
-        self.columns = Array(repeating: GridItem(.flexible(), spacing: 16), count: columnCount)
+    init(artists: [Artist]? = nil) {
+        self.artists = artists
     }
 
     var body: some View {

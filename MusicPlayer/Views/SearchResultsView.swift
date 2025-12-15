@@ -100,7 +100,7 @@ struct SearchResultsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: 5), spacing: 20) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 180, maximum: 220), spacing: 16)], spacing: 20) {
                 ForEach(searchManager.searchResults.albums, id: \.id) { album in
                     AlbumGridItem(album: album)
                 }
@@ -121,7 +121,7 @@ struct SearchResultsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: 5), spacing: 20) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 180, maximum: 220), spacing: 16)], spacing: 20) {
                 ForEach(searchManager.searchResults.artists, id: \.id) { artist in
                     SearchArtistGridItem(artist: artist)
                 }

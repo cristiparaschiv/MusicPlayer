@@ -5,10 +5,23 @@ struct ContentView: View {
     @State private var showQueue = false
     @StateObject private var searchManager = SearchManager()
     @State private var localEventMonitor: Any?
+    @State private var isLibraryEmpty: Bool = true
 
     var body: some View {
-        if MediaScannerManager.shared.isLibraryEmpty() {
+        if isLibraryEmpty {
             EmptyMusicLibraryView(context: .mainWindow)
+                .onAppear {
+                    isLibraryEmpty = MediaScannerManager.shared.isLibraryEmpty()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: Constants.Notifications.libraryDidUpdate)) { _ in
+                    isLibraryEmpty = MediaScannerManager.shared.isLibraryEmpty()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: Constants.Notifications.libraryPathsChanged)) { _ in
+                    // Check after a short delay to allow paths to be added
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        isLibraryEmpty = MediaScannerManager.shared.isLibraryEmpty()
+                    }
+                }
         } else {
             VStack(spacing: 0) {
                 // Main content area (navigation + now playing sidebar)
@@ -102,9 +115,16 @@ struct ContentView: View {
             }
             .onAppear {
                 setupKeyboardShortcuts()
+                isLibraryEmpty = MediaScannerManager.shared.isLibraryEmpty()
             }
             .onDisappear {
                 removeKeyboardShortcuts()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: Constants.Notifications.libraryDidUpdate)) { _ in
+                isLibraryEmpty = MediaScannerManager.shared.isLibraryEmpty()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: Constants.Notifications.libraryPathsChanged)) { _ in
+                isLibraryEmpty = MediaScannerManager.shared.isLibraryEmpty()
             }
         }
     }

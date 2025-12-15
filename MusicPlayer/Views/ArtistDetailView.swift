@@ -129,7 +129,7 @@ struct ArtistDetailView: View {
                                     .fontWeight(.bold)
                                     .padding(.horizontal)
 
-                                AlbumGrid(albums: albums, columnCount: 5)
+                                AlbumGrid(albums: albums)
                                     .padding(.horizontal)
                             }
                         }
