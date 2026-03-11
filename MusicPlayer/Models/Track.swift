@@ -19,6 +19,9 @@ struct Track {
     let duration: TimeInterval
     let bitrate: Int?
     let sampleRate: Int?
+    let channelCount: Int?
+    let formatName: String?
+    let bitDepth: Int?
     let filePath: String
     let fileSize: Int64
     let dateAdded: Date
@@ -28,6 +31,11 @@ struct Track {
     let rating: Int?
     let isFavorite: Bool
     let hasArtwork: Bool
+    let lyrics: String?
+    let replayGainTrackGain: Double?
+    let replayGainAlbumGain: Double?
+    let startTime: TimeInterval?
+    let endTime: TimeInterval?
 
     init(id: Int64,
          title: String,
@@ -47,6 +55,9 @@ struct Track {
          duration: TimeInterval,
          bitrate: Int? = nil,
          sampleRate: Int? = nil,
+         channelCount: Int? = nil,
+         formatName: String? = nil,
+         bitDepth: Int? = nil,
          filePath: String,
          fileSize: Int64,
          dateAdded: Date = Date(),
@@ -55,7 +66,12 @@ struct Track {
          playCount: Int = 0,
          rating: Int? = nil,
          isFavorite: Bool = false,
-         hasArtwork: Bool = false) {
+         hasArtwork: Bool = false,
+         lyrics: String? = nil,
+         replayGainTrackGain: Double? = nil,
+         replayGainAlbumGain: Double? = nil,
+         startTime: TimeInterval? = nil,
+         endTime: TimeInterval? = nil) {
         self.id = id
         self.title = title
         self.titleSort = titleSort ?? title.sortKey
@@ -74,6 +90,9 @@ struct Track {
         self.duration = duration
         self.bitrate = bitrate
         self.sampleRate = sampleRate
+        self.channelCount = channelCount
+        self.formatName = formatName
+        self.bitDepth = bitDepth
         self.filePath = filePath
         self.fileSize = fileSize
         self.dateAdded = dateAdded
@@ -83,6 +102,11 @@ struct Track {
         self.rating = rating
         self.isFavorite = isFavorite
         self.hasArtwork = hasArtwork
+        self.lyrics = lyrics
+        self.replayGainTrackGain = replayGainTrackGain
+        self.replayGainAlbumGain = replayGainAlbumGain
+        self.startTime = startTime
+        self.endTime = endTime
     }
 
     var displayArtist: String {

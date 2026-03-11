@@ -2,17 +2,24 @@ import SwiftUI
 
 struct NowPlayingView: View {
     @ObservedObject var nowPlaying = NowPlayingManager.shared
-    @State private var dominantColor: Color?
-
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
                 if let track = nowPlaying.currentTrack {
-                    // Artwork
+                    // Artwork (double-click for immersive mode)
                     artworkSection
+                        .onTapGesture(count: 2) {
+                            ImmersiveWindowManager.shared.show()
+                        }
+                        .contextMenu {
+                            nowPlayingContextMenu(track: track)
+                        }
 
                     // Track info
                     trackInfoSection(track: track)
+
+                    // Audio info pills
+                    audioInfoSection(track: track)
 
                     Divider()
 
@@ -26,20 +33,7 @@ struct NowPlayingView: View {
             .padding()
         }
         .frame(minWidth: 280)
-        .background(
-            ZStack {
-                Color(nsColor: .controlBackgroundColor)
-                if let dominantColor = dominantColor {
-                    dominantColor.opacity(0.15)
-                }
-            }
-        )
-        .onChange(of: nowPlaying.artwork) { _, newArtwork in
-            updateDominantColor(from: newArtwork)
-        }
-        .onAppear {
-            updateDominantColor(from: nowPlaying.artwork)
-        }
+        .background(.clear)
     }
 
     // MARK: - Artwork Section
@@ -59,6 +53,8 @@ struct NowPlayingView: View {
                     .frame(width: 240, height: 240)
                     .cornerRadius(8)
                     .shadow(color: .black.opacity(0.2), radius: 10, x: 0, y: 5)
+                    .id(nowPlaying.currentTrack?.id)
+                    .transition(.opacity)
                     .accessibilityLabel("Album artwork for \(nowPlaying.currentTrack?.albumTitle ?? "current track")")
             } else {
                 Image(systemName: Icons.musicNote)
@@ -72,6 +68,7 @@ struct NowPlayingView: View {
                     .accessibilityLabel("No artwork available")
             }
         }
+        .animation(.easeInOut(duration: 0.4), value: nowPlaying.currentTrack?.id)
     }
 
     // MARK: - Track Info Section
@@ -120,6 +117,78 @@ struct NowPlayingView: View {
         }
     }
 
+    // MARK: - Audio Info Section
+
+    private func audioInfoSection(track: Track) -> some View {
+        let pills = audioInfoPills(track: track)
+        return Group {
+            if !pills.isEmpty {
+                FlowLayout(spacing: 6) {
+                    ForEach(pills, id: \.self) { pill in
+                        Text(pill)
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.secondary.opacity(0.12))
+                            .cornerRadius(4)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    private func audioInfoPills(track: Track) -> [String] {
+        var pills: [String] = []
+
+        if let format = track.formatName, !format.isEmpty {
+            pills.append(format)
+        }
+
+        if let bitDepth = track.bitDepth, bitDepth > 0 {
+            pills.append("\(bitDepth)-bit")
+        }
+
+        if let sampleRate = track.sampleRate, sampleRate > 0 {
+            if sampleRate >= 1000 {
+                let khz = Double(sampleRate) / 1000.0
+                if khz.truncatingRemainder(dividingBy: 1) == 0 {
+                    pills.append("\(Int(khz)) kHz")
+                } else {
+                    pills.append(String(format: "%.1f kHz", khz))
+                }
+            } else {
+                pills.append("\(sampleRate) Hz")
+            }
+        }
+
+        if let bitrate = track.bitrate, bitrate > 0 {
+            pills.append("\(bitrate) kbps")
+        }
+
+        if let channels = track.channelCount {
+            switch channels {
+            case 1: pills.append("Mono")
+            case 2: pills.append("Stereo")
+            default: pills.append("\(channels)ch")
+            }
+        }
+
+        let fileSize = track.fileSize
+        if fileSize > 0 {
+            let mb = Double(fileSize) / (1024.0 * 1024.0)
+            if mb >= 1.0 {
+                pills.append(String(format: "%.1f MB", mb))
+            } else {
+                let kb = Double(fileSize) / 1024.0
+                pills.append(String(format: "%.0f KB", kb))
+            }
+        }
+
+        return pills
+    }
+
     // MARK: - Lyrics Section
 
     private func lyricsSection(track: Track) -> some View {
@@ -130,13 +199,7 @@ struct NowPlayingView: View {
 
                 Spacer()
 
-                if nowPlaying.lyricsState == .idle {
-                    Button("Load") {
-                        nowPlaying.loadLyrics()
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                } else if nowPlaying.lyricsState.isLoading {
+                if nowPlaying.lyricsState.isLoading {
                     ProgressView()
                         .controlSize(.small)
                 } else if case .failed = nowPlaying.lyricsState {
@@ -157,15 +220,11 @@ struct NowPlayingView: View {
                 }
                 .padding()
             } else if let lyrics = nowPlaying.lyrics {
-                ScrollView {
-                    Text(lyrics)
-                        .font(.body)
-                        .foregroundStyle(.primary)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxHeight: 300)
-                .padding(.vertical, 8)
+                SyncedLyricsView(
+                    lyrics: lyrics,
+                    currentTime: nowPlaying.currentTime,
+                    isPlaying: nowPlaying.playbackState == .playing
+                )
             } else if case .failed(let error) = nowPlaying.lyricsState {
                 VStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle")
@@ -186,6 +245,45 @@ struct NowPlayingView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding()
             }
+        }
+    }
+
+    // MARK: - Context Menu
+
+    @ViewBuilder
+    private func nowPlayingContextMenu(track: Track) -> some View {
+        if let artistId = track.artistId {
+            Button("Go to Artist") {
+                let artistDAO = ArtistDAO()
+                if let artist = artistDAO.getById(id: artistId) {
+                    NotificationCenter.default.post(
+                        name: Constants.Notifications.navigateToArtist,
+                        object: artist
+                    )
+                }
+            }
+        }
+
+        if let albumId = track.albumId {
+            Button("Go to Album") {
+                let albumDAO = AlbumDAO()
+                if let album = albumDAO.getById(id: albumId) {
+                    NotificationCenter.default.post(
+                        name: Constants.Notifications.navigateToAlbum,
+                        object: album
+                    )
+                }
+            }
+        }
+
+        Divider()
+
+        Button(track.isFavorite ? "Remove from Favorites" : "Add to Favorites") {
+            PlayerManager.shared.toggleFavorite(track: track)
+        }
+
+        Button("Show in Finder") {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: track.filePath)])
         }
     }
 
@@ -215,21 +313,4 @@ struct NowPlayingView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func updateDominantColor(from artwork: NSImage?) {
-        guard let artwork = artwork else {
-            withAnimation(.easeInOut(duration: 0.3)) {
-                dominantColor = nil
-            }
-            return
-        }
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            let extractedColor = ColorExtractor.extractDominantColor(from: artwork)
-            DispatchQueue.main.async {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    dominantColor = extractedColor
-                }
-            }
-        }
-    }
 }

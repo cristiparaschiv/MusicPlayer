@@ -4,21 +4,28 @@ class FileSystemMonitor {
     private var eventStream: FSEventStreamRef?
     private var monitoredPaths: [String] = []
     private let eventQueue = DispatchQueue(label: "com.orangemusicplayer.fsevents", qos: .background)
+    private var retainedSelf: Unmanaged<FileSystemMonitor>?
 
     var onPathsChanged: (() -> Void)?
 
     func startMonitoring(paths: [String]) {
         stopMonitoring()
 
-        guard !paths.isEmpty else {
+        // Filter out network volumes — FSEvents is unreliable on network mounts
+        let localPaths = paths.filter { !MediaScannerManager.isNetworkVolume(path: $0) }
+
+        guard !localPaths.isEmpty else {
             return
         }
 
-        monitoredPaths = paths
+        monitoredPaths = localPaths
+
+        // Retain self for the duration of monitoring to prevent dangling pointer
+        retainedSelf = Unmanaged.passRetained(self)
 
         var context = FSEventStreamContext(
             version: 0,
-            info: Unmanaged.passUnretained(self).toOpaque(),
+            info: retainedSelf!.toOpaque(),
             retain: nil,
             release: nil,
             copyDescription: nil
@@ -74,7 +81,6 @@ class FileSystemMonitor {
         if let stream = eventStream {
             FSEventStreamSetDispatchQueue(stream, eventQueue)
             FSEventStreamStart(stream)
-            print("Started monitoring \(paths.count) paths for file system changes")
         }
     }
 
@@ -84,9 +90,14 @@ class FileSystemMonitor {
             FSEventStreamInvalidate(stream)
             FSEventStreamRelease(stream)
             eventStream = nil
-            print("Stopped file system monitoring")
         }
         monitoredPaths.removeAll()
+
+        // Release the retained reference now that callbacks are fully stopped
+        if let retained = retainedSelf {
+            retained.release()
+            retainedSelf = nil
+        }
     }
 
     deinit {

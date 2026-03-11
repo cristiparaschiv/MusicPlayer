@@ -8,6 +8,7 @@ class QueueManager {
     private var queue: [Track] = []
     private var currentIndex: Int = -1
     private var originalQueue: [Track] = [] // For shuffle mode
+    private static let maxShuffleHistory = 100
     private var shuffleHistory: [Int] = [] // Track indices we've played in shuffle mode
 
     private var _isShuffleEnabled: Bool = false
@@ -227,12 +228,14 @@ class QueueManager {
                 self.shuffleHistory = []
             }
 
+            let wasCurrentTrack = (index == self.currentIndex)
+
             self.queueLock.unlock()
 
             self.persistState()
             self.notifyQueueChanged()
 
-            if index == self.currentIndex {
+            if wasCurrentTrack {
                 self.notifyCurrentTrackChanged()
             }
         }
@@ -296,8 +299,8 @@ class QueueManager {
         queueLock.lock()
         defer { queueLock.unlock() }
 
-        if _repeatMode == .one, let current = currentTrack {
-            return current
+        if _repeatMode == .one, currentIndex >= 0, currentIndex < queue.count {
+            return queue[currentIndex]
         }
 
         let nextIndex = currentIndex + 1
@@ -318,7 +321,7 @@ class QueueManager {
         queueLock.lock()
 
         if _repeatMode == .one {
-            let track = currentTrack
+            let track = (currentIndex >= 0 && currentIndex < queue.count) ? queue[currentIndex] : nil
             queueLock.unlock()
             notifyCurrentTrackChanged()
             return track
@@ -330,6 +333,9 @@ class QueueManager {
             currentIndex = nextIndex
             if _isShuffleEnabled {
                 shuffleHistory.append(currentIndex)
+                if shuffleHistory.count > Self.maxShuffleHistory {
+                    shuffleHistory.removeFirst(shuffleHistory.count - Self.maxShuffleHistory)
+                }
             }
             let track = queue[currentIndex]
             queueLock.unlock()
@@ -361,7 +367,7 @@ class QueueManager {
         queueLock.lock()
 
         if _repeatMode == .one {
-            let track = currentTrack
+            let track = (currentIndex >= 0 && currentIndex < queue.count) ? queue[currentIndex] : nil
             queueLock.unlock()
             notifyCurrentTrackChanged()
             return track
@@ -418,6 +424,9 @@ class QueueManager {
 
         if _isShuffleEnabled {
             shuffleHistory.append(index)
+            if shuffleHistory.count > Self.maxShuffleHistory {
+                shuffleHistory.removeFirst(shuffleHistory.count - Self.maxShuffleHistory)
+            }
         }
 
         let track = queue[index]
@@ -623,9 +632,26 @@ class QueueManager {
 
     // MARK: - Persistence
 
+    private var persistWorkItem: DispatchWorkItem?
+
     private func persistState() {
-        UserDefaults.standard.set(_isShuffleEnabled, forKey: Constants.UserDefaultsKeys.shuffleEnabled)
-        UserDefaults.standard.set(_repeatMode.rawValue, forKey: Constants.UserDefaultsKeys.repeatMode)
+        persistWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.queueLock.lock()
+            let shuffle = self._isShuffleEnabled
+            let repeatRaw = self._repeatMode.rawValue
+            let trackIDs = self.queue.map { $0.id }
+            let index = self.currentIndex
+            self.queueLock.unlock()
+
+            UserDefaults.standard.set(shuffle, forKey: Constants.UserDefaultsKeys.shuffleEnabled)
+            UserDefaults.standard.set(repeatRaw, forKey: Constants.UserDefaultsKeys.repeatMode)
+            UserDefaults.standard.set(trackIDs, forKey: Constants.UserDefaultsKeys.queueTrackIDs)
+            UserDefaults.standard.set(index, forKey: Constants.UserDefaultsKeys.queueCurrentIndex)
+        }
+        persistWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: item)
     }
 
     private func loadPersistedState() {
@@ -634,6 +660,24 @@ class QueueManager {
         if let repeatValue = UserDefaults.standard.string(forKey: Constants.UserDefaultsKeys.repeatMode),
            let mode = RepeatMode(rawValue: repeatValue) {
             _repeatMode = mode
+        }
+
+        // Restore queue from persisted track IDs
+        if let savedIDs = UserDefaults.standard.array(forKey: Constants.UserDefaultsKeys.queueTrackIDs) as? [Int64],
+           !savedIDs.isEmpty {
+            let trackDAO = TrackDAO()
+            let restoredTracks = savedIDs.compactMap { trackDAO.getById(id: $0) }
+            if !restoredTracks.isEmpty {
+                queue = restoredTracks
+                originalQueue = restoredTracks
+                currentIndex = UserDefaults.standard.integer(forKey: Constants.UserDefaultsKeys.queueCurrentIndex)
+                // Clamp index to valid range
+                if currentIndex < 0 || currentIndex >= queue.count {
+                    currentIndex = 0
+                }
+                notifyQueueChanged()
+                notifyCurrentTrackChanged()
+            }
         }
     }
 }

@@ -27,15 +27,37 @@ struct HomeView: View {
                     .buttonStyle(.bordered)
                 }
 
-                // Example Sections
-                SectionHeader("New Albums")
-                AlbumGrid(albums: recentAlbums)
+                // Sections — only show if populated
+                if !recentAlbums.isEmpty {
+                    SectionHeader("New Albums")
+                    AlbumGrid(albums: recentAlbums)
+                }
 
-                SectionHeader("Recently Played")
-                AlbumGrid(albums: recentlyPlayedAlbums)
+                if !recentlyPlayedAlbums.isEmpty {
+                    SectionHeader("Recently Played")
+                    AlbumGrid(albums: recentlyPlayedAlbums)
+                }
 
-                SectionHeader("Frequently Played")
-                AlbumGrid(albums: mostPlayedAlbums)
+                if !mostPlayedAlbums.isEmpty {
+                    SectionHeader("Frequently Played")
+                    AlbumGrid(albums: mostPlayedAlbums)
+                }
+
+                if recentAlbums.isEmpty && recentlyPlayedAlbums.isEmpty && mostPlayedAlbums.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "music.note.house")
+                            .font(.system(size: 48))
+                            .foregroundColor(.secondary)
+                        Text("Your library is waiting")
+                            .font(.headline)
+                            .foregroundColor(.secondary)
+                        Text("Start playing music to see your listening activity here")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 60)
+                }
             }
             .padding()
         }
@@ -45,34 +67,37 @@ struct HomeView: View {
     }
 
     func loadData() {
-        recentAlbums = albumDAO.getRecentlyAdded(limit: 5)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let recent = albumDAO.getRecentlyAdded(limit: 5)
 
-        // Get recently played tracks and convert to albums
-        let recentlyPlayedTracks = playHistoryDAO.getRecentlyPlayed(limit: 20)
-        recentlyPlayedAlbums = getUniqueAlbums(from: recentlyPlayedTracks, limit: 5)
+            let recentlyPlayedTracks = playHistoryDAO.getRecentlyPlayed(limit: 20)
+            let recentlyPlayed = getUniqueAlbums(from: recentlyPlayedTracks, limit: 5)
 
-        // Get most played tracks and convert to albums
-        let mostPlayedTracks = playHistoryDAO.getMostPlayed(limit: 20)
-        mostPlayedAlbums = getUniqueAlbums(from: mostPlayedTracks, limit: 5)
+            let mostPlayedTracks = playHistoryDAO.getMostPlayed(limit: 20)
+            let mostPlayed = getUniqueAlbums(from: mostPlayedTracks, limit: 5)
+
+            DispatchQueue.main.async {
+                recentAlbums = recent
+                recentlyPlayedAlbums = recentlyPlayed
+                mostPlayedAlbums = mostPlayed
+            }
+        }
     }
 
     func getUniqueAlbums(from tracks: [Track], limit: Int) -> [Album] {
-        var uniqueAlbumIds = Set<Int64>()
-        var albums: [Album] = []
-
+        // Collect unique album IDs in order
+        var uniqueAlbumIds: [Int64] = []
+        var seen = Set<Int64>()
         for track in tracks {
-            if let albumId = track.albumId, !uniqueAlbumIds.contains(albumId) {
-                if let album = albumDAO.getById(id: albumId) {
-                    albums.append(album)
-                    uniqueAlbumIds.insert(albumId)
-                    if albums.count >= limit {
-                        break
-                    }
-                }
+            if let albumId = track.albumId, !seen.contains(albumId) {
+                seen.insert(albumId)
+                uniqueAlbumIds.append(albumId)
+                if uniqueAlbumIds.count >= limit { break }
             }
         }
 
-        return albums
+        // Batch fetch albums
+        return uniqueAlbumIds.compactMap { albumDAO.getById(id: $0) }
     }
 
     func shuffleAll() {

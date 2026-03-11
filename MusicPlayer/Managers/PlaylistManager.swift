@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import UniformTypeIdentifiers
 
 class PlaylistManager {
     static let shared = PlaylistManager()
@@ -442,6 +444,86 @@ class PlaylistManager {
             }
 
             self.callCompletion(completion, with: .success(createdPlaylist))
+        }
+    }
+
+    // MARK: - Export / Import
+
+    /// Export a playlist to M3U8 file via NSSavePanel
+    func exportPlaylist(name: String, tracks: [Track]) {
+        let panel = NSSavePanel()
+        panel.title = "Export Playlist"
+        panel.nameFieldStringValue = "\(name).m3u8"
+        panel.allowedContentTypes = [UTType(filenameExtension: "m3u8"), UTType(filenameExtension: "m3u")].compactMap { $0 }
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        var content = "#EXTM3U\n"
+        for track in tracks {
+            let seconds = Int(track.duration)
+            let artist = track.displayArtist
+            content += "#EXTINF:\(seconds),\(artist) - \(track.title)\n"
+            content += "\(track.filePath)\n"
+        }
+
+        try? content.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    /// Import a playlist from M3U/M3U8/PLS file via NSOpenPanel
+    func importPlaylist(completion: ((String) -> Void)? = nil) {
+        let panel = NSOpenPanel()
+        panel.title = "Import Playlist"
+        panel.allowedContentTypes = [
+            UTType(filenameExtension: "m3u"),
+            UTType(filenameExtension: "m3u8"),
+            UTType(filenameExtension: "pls")
+        ].compactMap { $0 }
+        panel.allowsMultipleSelection = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let content = try? String(contentsOf: url, encoding: .utf8) else { return }
+
+        let isPLS = url.pathExtension.lowercased() == "pls"
+        let filePaths: [String]
+
+        if isPLS {
+            filePaths = content.components(separatedBy: .newlines)
+                .filter { $0.hasPrefix("File") && $0.contains("=") }
+                .compactMap { $0.components(separatedBy: "=").dropFirst().joined(separator: "=") }
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        } else {
+            filePaths = content.components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty && !$0.hasPrefix("#") }
+        }
+
+        // Resolve relative paths against the playlist file's directory
+        let baseDir = url.deletingLastPathComponent()
+        let resolvedPaths = filePaths.map { path -> String in
+            if path.hasPrefix("/") { return path }
+            return baseDir.appendingPathComponent(path).path
+        }
+
+        // Match against library tracks
+        let matchedTrackIds = resolvedPaths.compactMap { path -> Int64? in
+            trackDAO.getByFilePath(path: path)?.id
+        }
+
+        guard !matchedTrackIds.isEmpty else {
+            completion?("No matching tracks found in library.")
+            return
+        }
+
+        let playlistName = url.deletingPathExtension().lastPathComponent
+
+        createPlaylist(name: playlistName) { result in
+            switch result {
+            case .success(let playlist):
+                self.addTracks(trackIds: matchedTrackIds, toPlaylist: playlist.id)
+                completion?("Imported \"\(playlistName)\" with \(matchedTrackIds.count) of \(resolvedPaths.count) tracks.")
+            case .failure(let error):
+                completion?(error.localizedDescription)
+            }
         }
     }
 

@@ -9,31 +9,29 @@ class ArtistDAO {
         VALUES (?, ?, ?, ?, ?)
         """
 
-        db.execute(sql: sql, parameters: [
+        return db.executeInsert(sql: sql, parameters: [
             artist.name,
             artist.nameSort,
             artist.albumCount,
             artist.trackCount,
             artist.profileImagePath as Any
         ])
-
-        return db.lastInsertRowId()
     }
 
-    func getAll(limit: Int? = nil, offset: Int = 0, orderBy: String = "name_sort") -> [Artist] {
-        var sql = "SELECT * FROM artists ORDER BY \(orderBy)"
+    func getAll(limit: Int? = nil, offset: Int = 0) -> [Artist] {
+        var sql = "SELECT * FROM artists ORDER BY name_sort"
         if let limit = limit {
             sql += " LIMIT \(limit) OFFSET \(offset)"
         }
 
         let results = db.query(sql: sql)
-        return results.map { rowToArtist($0) }
+        return results.compactMap { rowToArtist($0) }
     }
 
     func getById(id: Int64) -> Artist? {
         let sql = "SELECT * FROM artists WHERE id = ?"
         let results = db.query(sql: sql, parameters: [id])
-        return results.first.map { rowToArtist($0) }
+        return results.first.flatMap { rowToArtist($0) }
     }
 
     func search(query: String, limit: Int = 100) -> [Artist] {
@@ -45,18 +43,14 @@ class ArtistDAO {
         """
 
         let searchTerm = "%\(query)%"
-        print("[ArtistDAO] Searching with term: '\(searchTerm)'")
         let results = db.query(sql: sql, parameters: [searchTerm, limit])
-        print("[ArtistDAO] Query returned \(results.count) rows")
-        let artists = results.map { rowToArtist($0) }
-        print("[ArtistDAO] Mapped to \(artists.count) artists")
-        return artists
+        return results.compactMap { rowToArtist($0) }
     }
 
     func getTopArtists(limit: Int = 20) -> [Artist] {
         let sql = "SELECT * FROM artists ORDER BY track_count DESC LIMIT ?"
         let results = db.query(sql: sql, parameters: [limit])
-        return results.map { rowToArtist($0) }
+        return results.compactMap { rowToArtist($0) }
     }
 
     func update(artist: Artist) {
@@ -116,10 +110,14 @@ class ArtistDAO {
         db.execute(sql: trackCountSQL, parameters: [artistId, artistId])
     }
 
-    private func rowToArtist(_ row: [String: Any]) -> Artist {
+    private func rowToArtist(_ row: [String: Any]) -> Artist? {
+        guard let id = row["id"] as? Int64,
+              let name = row["name"] as? String else {
+            return nil
+        }
         return Artist(
-            id: row["id"] as! Int64,
-            name: row["name"] as! String,
+            id: id,
+            name: name,
             nameSort: row["name_sort"] as? String,
             albumCount: Int(row["album_count"] as? Int64 ?? 0),
             trackCount: Int(row["track_count"] as? Int64 ?? 0),

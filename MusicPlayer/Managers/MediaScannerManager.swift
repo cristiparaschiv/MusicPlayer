@@ -1,7 +1,27 @@
+import Combine
 import Foundation
 import SFBAudioEngine
 
-class MediaScannerManager {
+struct LibraryPathStatus: Identifiable {
+    let id: String
+    let path: String
+    let isAvailable: Bool
+    let isNetworkVolume: Bool
+    let scanState: ScanState
+
+    enum ScanState {
+        case idle
+        case scanning(processed: Int, total: Int)
+        case complete(trackCount: Int)
+        case unavailable
+    }
+
+    var displayName: String {
+        URL(fileURLWithPath: path).lastPathComponent
+    }
+}
+
+class MediaScannerManager: ObservableObject {
     static let shared = MediaScannerManager()
 
     private let trackDAO = TrackDAO()
@@ -15,15 +35,43 @@ class MediaScannerManager {
     private let scanLock = NSLock()
 
     private let artworkManager = ArtworkManager.shared
+
+    @Published var isScanningPublished = false
+    @Published var scanProgress: String = ""
+    @Published var pathStatuses: [LibraryPathStatus] = []
     
     // Supported audio file extensions
     private let supportedExtensions: Set<String> = [
         "mp3", "m4a", "aac", "flac", "alac", "wav", "aiff", "aif",
-        "ogg", "opus", "wma", "ape", "dsf", "dff"
+        "ogg", "opus", "wma", "ape", "dsf", "dff", "wv", "mpc", "caf"
     ]
 
     private init() {
         setupFileSystemMonitoring()
+        refreshPathStatuses()
+    }
+
+    /// Check if a path is on a network volume (SMB, AFP, NFS, etc.)
+    static func isNetworkVolume(path: String) -> Bool {
+        let url = URL(fileURLWithPath: path)
+        guard let resourceValues = try? url.resourceValues(forKeys: [.volumeIsLocalKey]) else {
+            return false
+        }
+        return resourceValues.volumeIsLocal == false
+    }
+
+    /// Refresh the availability status of all library paths
+    func refreshPathStatuses() {
+        let paths = getLibraryPaths()
+        let statuses = paths.map { path -> LibraryPathStatus in
+            let available = FileManager.default.fileExists(atPath: path)
+            let isNetwork = Self.isNetworkVolume(path: path)
+            let state: LibraryPathStatus.ScanState = available ? .idle : .unavailable
+            return LibraryPathStatus(id: path, path: path, isAvailable: available, isNetworkVolume: isNetwork, scanState: state)
+        }
+        DispatchQueue.main.async {
+            self.pathStatuses = statuses
+        }
     }
     
     func isLibraryEmpty() -> Bool {
@@ -67,9 +115,11 @@ class MediaScannerManager {
         // Remove security-scoped bookmark
         SecurityBookmarkManager.shared.removeBookmark(for: path)
 
-        // Optionally, remove tracks associated with this path
-        let deleteTracksSql = "DELETE FROM tracks WHERE file_path LIKE ?"
-        db.execute(sql: deleteTracksSql, parameters: [path + "%"])
+        // Remove tracks associated with this path
+        let escapedPath = path.replacingOccurrences(of: "%", with: "\\%")
+                              .replacingOccurrences(of: "_", with: "\\_")
+        let deleteTracksSql = "DELETE FROM tracks WHERE file_path LIKE ? ESCAPE '\\'"
+        db.execute(sql: deleteTracksSql, parameters: [escapedPath + "/%"])
 
         // Restart file system monitoring with updated paths
         startMonitoring()
@@ -83,15 +133,15 @@ class MediaScannerManager {
         // Delete all existing tracks, albums, and artists
         let db = DatabaseManager.shared
 
+        db.beginTransaction()
         db.execute(sql: "DELETE FROM playlist_tracks")
         db.execute(sql: "DELETE FROM tracks")
         db.execute(sql: "DELETE FROM albums")
         db.execute(sql: "DELETE FROM artists")
         db.execute(sql: "DELETE FROM genres")
         db.execute(sql: "DELETE FROM composers")
-
-        // Reset last_scanned for all library paths
         db.execute(sql: "UPDATE library_paths SET last_scanned = NULL")
+        db.commitTransaction()
 
         // Trigger scan for all paths
         scanForChanges()
@@ -122,96 +172,284 @@ class MediaScannerManager {
 
     // MARK: - Scanning Implementation
 
+    private func updateProgress(_ message: String, scanning: Bool = true) {
+        DispatchQueue.main.async {
+            self.scanProgress = message
+            self.isScanningPublished = scanning
+        }
+    }
+
+    private func updatePathStatus(path: String, state: LibraryPathStatus.ScanState) {
+        DispatchQueue.main.async {
+            if let idx = self.pathStatuses.firstIndex(where: { $0.path == path }) {
+                let old = self.pathStatuses[idx]
+                self.pathStatuses[idx] = LibraryPathStatus(
+                    id: old.id, path: old.path, isAvailable: old.isAvailable,
+                    isNetworkVolume: old.isNetworkVolume, scanState: state
+                )
+            }
+        }
+    }
+
+    // MARK: - In-memory caches for scan performance (internal for TrackDAO access)
+    private var _artistCache: [String: Int64] = [:]
+    private var _genreCache: [String: Int64] = [:]
+    private var _composerCache: [String: Int64] = [:]
+    private var _albumCache: [String: Int64] = [:]  // key: "title|artistId"
+    private let cacheLock = NSLock()
+
+    func getCachedArtist(_ name: String) -> Int64? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return _artistCache[name]
+    }
+    func setCachedArtist(_ name: String, id: Int64) {
+        cacheLock.lock()
+        _artistCache[name] = id
+        cacheLock.unlock()
+    }
+    func getCachedGenre(_ name: String) -> Int64? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return _genreCache[name]
+    }
+    func setCachedGenre(_ name: String, id: Int64) {
+        cacheLock.lock()
+        _genreCache[name] = id
+        cacheLock.unlock()
+    }
+    func getCachedComposer(_ name: String) -> Int64? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return _composerCache[name]
+    }
+    func setCachedComposer(_ name: String, id: Int64) {
+        cacheLock.lock()
+        _composerCache[name] = id
+        cacheLock.unlock()
+    }
+    func getCachedAlbum(_ key: String) -> Int64? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return _albumCache[key]
+    }
+    func setCachedAlbum(_ key: String, id: Int64) {
+        cacheLock.lock()
+        _albumCache[key] = id
+        cacheLock.unlock()
+    }
+
+    private static let yearFormatters: [DateFormatter] = {
+        ["yyyy-MM-dd", "yyyy-MM", "yyyy"].map { format in
+            let f = DateFormatter()
+            f.dateFormat = format
+            return f
+        }
+    }()
+
     private func performScan(fullRescan: Bool) {
         scanLock.lock()
         guard !isCurrentlyScanning else {
             scanLock.unlock()
-            print("Scan already in progress, skipping...")
             return
         }
         isCurrentlyScanning = true
         scanLock.unlock()
 
+        updateProgress("Preparing scan...")
+        refreshPathStatuses()
+
         defer {
             scanLock.lock()
             isCurrentlyScanning = false
             scanLock.unlock()
+            updateProgress("", scanning: false)
         }
 
         let paths = getLibraryPaths()
-        print("Scanning \(paths.count) library paths...")
-
         let db = DatabaseManager.shared
-        var allProcessedFiles = Set<String>()
+
+        // Mark scan start time — used to detect deleted files instead of a Set
+        let scanStartTime = Date().timeIntervalSince1970
+
+        // Pre-populate entity caches from database
+        cacheLock.lock()
+        _artistCache.removeAll()
+        for row in db.query(sql: "SELECT id, name FROM artists") {
+            if let id = row["id"] as? Int64, let name = row["name"] as? String {
+                _artistCache[name] = id
+            }
+        }
+        _genreCache.removeAll()
+        for row in db.query(sql: "SELECT id, name FROM genres") {
+            if let id = row["id"] as? Int64, let name = row["name"] as? String {
+                _genreCache[name] = id
+            }
+        }
+        _composerCache.removeAll()
+        for row in db.query(sql: "SELECT id, name FROM composers") {
+            if let id = row["id"] as? Int64, let name = row["name"] as? String {
+                _composerCache[name] = id
+            }
+        }
+        _albumCache.removeAll()
+        for row in db.query(sql: "SELECT id, title, artist_id FROM albums") {
+            if let id = row["id"] as? Int64, let title = row["title"] as? String {
+                let artistId = row["artist_id"] as? Int64
+                let key = "\(title)|\(artistId ?? -1)"
+                _albumCache[key] = id
+            }
+        }
+        cacheLock.unlock()
+
+        // Build a set of existing file paths with their modification dates for fast lookup
+        var existingTracks: [String: Double] = [:]  // filePath -> dateModified
+        if !fullRescan {
+            let rows = db.query(sql: "SELECT file_path, date_modified FROM tracks")
+            for row in rows {
+                if let path = row["file_path"] as? String, let modified = row["date_modified"] as? Double {
+                    existingTracks[path] = modified
+                }
+            }
+        }
+
+        // Disable FTS triggers during scan — rebuild index at end
+        db.disableFTSTriggers()
 
         for libraryPath in paths {
-            let url = URL(fileURLWithPath: libraryPath)
-
             guard FileManager.default.fileExists(atPath: libraryPath) else {
-                print("Library path does not exist: \(libraryPath)")
+                updatePathStatus(path: libraryPath, state: .unavailable)
                 continue
             }
 
-            let audioFiles = findAudioFiles(in: url)
-            print("Found \(audioFiles.count) audio files in \(libraryPath)")
+            let url = URL(fileURLWithPath: libraryPath)
+            let isNetwork = Self.isNetworkVolume(path: libraryPath)
+            let folderName = url.lastPathComponent
+            updateProgress("Discovering files in \(folderName)...")
+            updatePathStatus(path: libraryPath, state: .scanning(processed: 0, total: 0))
 
-            for (index, fileURL) in audioFiles.enumerated() {
-                if index % 100 == 0 {
-                    print("Processing file \(index + 1) of \(audioFiles.count)...")
+            // Stream file enumeration — process in batches without collecting all URLs first
+            var totalDiscovered = 0
+            var batchCount = 0
+            let batchSize = 500
+
+            db.beginTransaction()
+
+            enumerateAudioFiles(in: url) { fileURL in
+                totalDiscovered += 1
+
+                let progressInterval = isNetwork ? 10 : 50
+                if totalDiscovered % progressInterval == 0 {
+                    self.updateProgress("Scanning \(folderName): \(totalDiscovered) files...")
+                    self.updatePathStatus(path: libraryPath, state: .scanning(processed: totalDiscovered, total: 0))
                 }
 
-                let filePath = fileURL.path
-                allProcessedFiles.insert(filePath)
+                // Use autoreleasepool to free SFBAudioEngine Obj-C objects each iteration
+                autoreleasepool {
+                    let filePath = fileURL.path
 
-                // Check if file exists in database
-                let existingTrack = trackDAO.getTrack(byPath: filePath)
+                    // Handle CUE files separately
+                    if fileURL.pathExtension.lowercased() == "cue" {
+                        self.processCUEFile(fileURL)
+                        db.execute(sql: "UPDATE tracks SET last_scan_time = ? WHERE file_path LIKE ?",
+                                   parameters: [scanStartTime, filePath + "%"])
+                        return
+                    }
 
-                // Get file modification date
-                let fileAttributes = try? FileManager.default.attributesOfItem(atPath: filePath)
-                let modificationDate = fileAttributes?[.modificationDate] as? Date ?? Date()
+                    // Mark this file as seen in current scan
+                    let existingModified = existingTracks[filePath]
 
-                // Skip if file hasn't been modified and we're not doing a full rescan
-                if !fullRescan, let existing = existingTrack {
-                    if existing.dateModified >= modificationDate {
-                        continue
+                    // Get file modification date
+                    let fileAttributes = try? FileManager.default.attributesOfItem(atPath: filePath)
+                    let modificationDate = fileAttributes?[.modificationDate] as? Date ?? Date()
+
+                    // Skip if file hasn't been modified
+                    if !fullRescan, let existingMod = existingModified {
+                        if existingMod >= modificationDate.timeIntervalSince1970 {
+                            // Just mark as seen
+                            db.execute(sql: "UPDATE tracks SET last_scan_time = ? WHERE file_path = ?",
+                                       parameters: [scanStartTime, filePath])
+                            return
+                        }
+                    }
+
+                    // Extract metadata and update/insert track
+                    if let metadata = self.extractMetadata(from: fileURL) {
+                        if existingModified != nil {
+                            self.trackDAO.updateTrack(metadata: metadata, filePath: filePath)
+                        } else {
+                            self.trackDAO.insertTrack(metadata: metadata)
+                        }
+                        db.execute(sql: "UPDATE tracks SET last_scan_time = ? WHERE file_path = ?",
+                                   parameters: [scanStartTime, filePath])
                     }
                 }
 
-                // Extract metadata and update/insert track
-                if let metadata = extractMetadata(from: fileURL) {
-                    if existingTrack != nil {
-                        trackDAO.updateTrack(metadata: metadata, filePath: filePath)
-                    } else {
-                        trackDAO.insertTrack(metadata: metadata)
+                batchCount += 1
+
+                // Commit transaction batch and refresh views periodically
+                if batchCount >= batchSize {
+                    db.commitTransaction()
+                    batchCount = 0
+
+                    DispatchQueue.main.async {
+                        NotificationCenter.default.post(name: Constants.Notifications.libraryDidUpdate, object: nil)
                     }
+
+                    db.beginTransaction()
                 }
-                
             }
+
+            // Commit remaining batch
+            db.commitTransaction()
 
             // Update last_scanned timestamp
             let now = Date().timeIntervalSince1970
             db.execute(sql: "UPDATE library_paths SET last_scanned = ? WHERE path = ?",
                       parameters: [now, libraryPath])
+
+            updatePathStatus(path: libraryPath, state: .complete(trackCount: totalDiscovered))
         }
 
-        // Remove tracks that no longer exist
+        // Remove tracks that no longer exist (not seen during this scan)
         if !fullRescan {
-            removeDeletedTracks(existingFiles: allProcessedFiles, libraryPaths: paths)
+            updateProgress("Cleaning up removed files...")
+            for libraryPath in paths {
+                guard FileManager.default.fileExists(atPath: libraryPath) else { continue }
+                let escapedPath = libraryPath.replacingOccurrences(of: "%", with: "\\%")
+                    .replacingOccurrences(of: "_", with: "\\_")
+                db.execute(sql: """
+                    DELETE FROM tracks WHERE file_path LIKE ? ESCAPE '\\'
+                    AND (last_scan_time IS NULL OR last_scan_time < ?)
+                """, parameters: [escapedPath + "/%", scanStartTime])
+            }
         }
+
+        // Re-enable FTS triggers and rebuild index
+        db.enableFTSTriggers()
+        updateProgress("Building search index...")
+        db.rebuildFTSIndex()
 
         // Update album and artist counts
+        updateProgress("Updating library statistics...")
         updateLibraryStatistics()
+
+        // Clear caches
+        cacheLock.lock()
+        _artistCache.removeAll()
+        _genreCache.removeAll()
+        _composerCache.removeAll()
+        _albumCache.removeAll()
+        cacheLock.unlock()
 
         // Post notification that library was updated
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: Constants.Notifications.libraryDidUpdate, object: nil)
         }
-
-        print("Scan completed!")
     }
 
-    private func findAudioFiles(in directory: URL) -> [URL] {
-        var audioFiles: [URL] = []
+    /// Stream-enumerate audio files without collecting them all into an array
+    private func enumerateAudioFiles(in directory: URL, handler: (URL) -> Void) {
         let fileManager = FileManager.default
 
         guard let enumerator = fileManager.enumerator(
@@ -219,7 +457,7 @@ class MediaScannerManager {
             includingPropertiesForKeys: [.isRegularFileKey],
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
         ) else {
-            return audioFiles
+            return
         }
 
         for case let fileURL as URL in enumerator {
@@ -230,12 +468,98 @@ class MediaScannerManager {
             }
 
             let fileExtension = fileURL.pathExtension.lowercased()
-            if supportedExtensions.contains(fileExtension) {
-                audioFiles.append(fileURL)
+            if supportedExtensions.contains(fileExtension) || fileExtension == "cue" {
+                handler(fileURL)
+            }
+        }
+    }
+
+    // MARK: - CUE Sheet Processing
+
+    private func processCUEFile(_ cueURL: URL) {
+        guard let sheet = CUEParser.parse(url: cueURL) else { return }
+
+        let cueDir = cueURL.deletingLastPathComponent()
+        var audioURL = cueDir.appendingPathComponent(sheet.audioFileName)
+
+        if !FileManager.default.fileExists(atPath: audioURL.path) {
+            // Fallback: look for a single audio file in the same directory
+            // CUE files often reference a name that doesn't match the actual file
+            if let fallback = findAudioFileForCUE(in: cueDir, cueFileName: cueURL.deletingPathExtension().lastPathComponent) {
+                audioURL = fallback
+            } else {
+                #if DEBUG
+                print("CUE: referenced audio file not found: \(audioURL.path)")
+                #endif
+                return
             }
         }
 
-        return audioFiles
+        // Get audio file properties for total duration
+        guard let audioFile = try? AudioFile(readingPropertiesAndMetadataFrom: audioURL),
+              let totalDuration = audioFile.properties.duration else {
+            return
+        }
+
+        let fileAttributes = try? FileManager.default.attributesOfItem(atPath: audioURL.path)
+        let fileSize = fileAttributes?[.size] as? Int64 ?? 0
+        let modificationDate = fileAttributes?[.modificationDate] as? Date ?? Date()
+
+        for (i, cueTrack) in sheet.tracks.enumerated() {
+            // Calculate end time: next track's start time, or total duration
+            let endTime: TimeInterval
+            if i + 1 < sheet.tracks.count {
+                endTime = sheet.tracks[i + 1].startTime
+            } else {
+                endTime = totalDuration
+            }
+
+            let trackDuration = endTime - cueTrack.startTime
+
+            // Use a virtual path: audiofile.flac#track01
+            let virtualPath = "\(audioURL.path)#track\(String(format: "%02d", cueTrack.trackNumber))"
+
+            // Check if already exists
+            let existing = trackDAO.getTrack(byPath: virtualPath)
+            if existing != nil { continue }
+
+            var metadata = AudioMetadata(
+                filePath: virtualPath,
+                fileSize: fileSize,
+                duration: trackDuration,
+                dateModified: modificationDate
+            )
+
+            metadata.title = cueTrack.title
+            metadata.artist = cueTrack.performer
+            metadata.album = sheet.title
+            metadata.albumArtist = sheet.performer
+            metadata.trackNumber = cueTrack.trackNumber
+            metadata.formatName = audioURL.pathExtension.uppercased()
+            metadata.startTime = cueTrack.startTime
+            metadata.endTime = endTime
+
+            // Get technical properties from the audio file
+            if let sampleRate = audioFile.properties.sampleRate {
+                metadata.sampleRate = Int(sampleRate)
+            }
+            if let bitrate = audioFile.properties.bitrate {
+                metadata.bitrate = Int(bitrate / 1000)
+            }
+            if let channelCount = audioFile.properties.channelCount {
+                metadata.channelCount = Int(channelCount)
+            }
+            if let bitDepth = audioFile.properties.bitDepth {
+                metadata.bitDepth = bitDepth
+            }
+
+            trackDAO.insertTrack(metadata: metadata)
+        }
+    }
+
+    /// Public wrapper for re-extracting metadata after tag edits
+    func reExtractMetadata(from url: URL) -> AudioMetadata? {
+        return extractMetadata(from: url)
     }
 
     private func extractMetadata(from url: URL) -> AudioMetadata? {
@@ -248,14 +572,18 @@ class MediaScannerManager {
 
         // Try to open the audio file with SFBAudioEngine
         guard let audioFile = try? AudioFile(readingPropertiesAndMetadataFrom: url) else {
+            #if DEBUG
             print("Failed to read audio file: \(url.path)")
+            #endif
             return nil
         }
 
         // Get audio properties
         let properties = audioFile.properties
         guard let duration = properties.duration, duration > 0 else {
+            #if DEBUG
             print("Invalid audio properties for: \(url.path)")
+            #endif
             return nil
         }
 
@@ -326,9 +654,12 @@ class MediaScannerManager {
         if let channelCount = properties.channelCount {
             metadata.channelCount = Int(channelCount)
         }
+        if let bitDepth = properties.bitDepth {
+            metadata.bitDepth = bitDepth
+        }
 
-        // Format info
-        metadata.formatName = properties.formatName
+        // Format info - derive from file extension
+        metadata.formatName = url.pathExtension.uppercased()
 
         // Use filename as title if no title metadata
         if metadata.title == nil || metadata.title?.isEmpty == true {
@@ -339,51 +670,49 @@ class MediaScannerManager {
     }
 
     private func extractYear(from dateString: String) -> Int? {
-        // Try different date formats
-        let dateFormatters = [
-            "yyyy-MM-dd",
-            "yyyy-MM",
-            "yyyy"
-        ]
-
-        for format in dateFormatters {
-            let formatter = DateFormatter()
-            formatter.dateFormat = format
+        for formatter in Self.yearFormatters {
             if let date = formatter.date(from: dateString) {
-                let calendar = Calendar.current
-                return calendar.component(.year, from: date)
+                return Calendar.current.component(.year, from: date)
             }
         }
 
         // Try to extract just the year if it's a 4-digit number
         if dateString.count >= 4 {
-            let yearString = String(dateString.prefix(4))
-            return Int(yearString)
+            return Int(String(dateString.prefix(4)))
         }
 
         return nil
     }
 
-    private func removeDeletedTracks(existingFiles: Set<String>, libraryPaths: [String]) {
-        let db = DatabaseManager.shared
+    /// Find a matching audio file for a CUE sheet when the referenced filename doesn't exist
+    private func findAudioFileForCUE(in directory: URL, cueFileName: String) -> URL? {
+        let audioExtensions: Set<String> = ["wav", "flac", "ape", "wv", "alac", "aiff", "aif"]
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else { return nil }
 
-        for libraryPath in libraryPaths {
-            let sql = "SELECT id, file_path FROM tracks WHERE file_path LIKE ?"
-            let results = db.query(sql: sql, parameters: [libraryPath + "%"])
+        let audioFiles = contents.filter { audioExtensions.contains($0.pathExtension.lowercased()) }
 
-            for row in results {
-                if let filePath = row["file_path"] as? String,
-                   !existingFiles.contains(filePath),
-                   !FileManager.default.fileExists(atPath: filePath) {
-                    if let trackId = row["id"] as? Int64 {
-                        trackDAO.deleteTrack(id: trackId)
-                    }
-                }
+        // If there's only one audio file, it's almost certainly the one the CUE references
+        if audioFiles.count == 1 {
+            return audioFiles[0]
+        }
+
+        // Try matching by CUE filename stem (e.g., "album.cue" -> "album.flac")
+        for file in audioFiles {
+            if file.deletingPathExtension().lastPathComponent.lowercased() == cueFileName.lowercased() {
+                return file
             }
         }
+
+        return nil
     }
 
-    private func updateLibraryStatistics() {
+    // removeDeletedTracks is now handled inline via last_scan_time column
+
+    func updateLibraryStatistics() {
         let db = DatabaseManager.shared
 
         // Update artist statistics
@@ -538,10 +867,15 @@ struct AudioMetadata {
     var sampleRate: Int?
     var channelCount: Int?
     var formatName: String?
+    var bitDepth: Int?
 
     // ReplayGain
     var replayGainTrackGain: Double?
     var replayGainAlbumGain: Double?
+
+    // CUE sheet support
+    var startTime: TimeInterval?
+    var endTime: TimeInterval?
 }
 
 enum TrackSortOption {

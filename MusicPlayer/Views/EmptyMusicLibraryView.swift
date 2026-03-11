@@ -55,9 +55,14 @@ struct EmptyMusicLibraryView: View {
                         .font(.title3)
                         .foregroundColor(.secondary)
 
-                    Text("You can select multiple folders at once")
+                    Text("You can also drag and drop folders into the window")
                         .font(.subheadline)
                         .foregroundColor(.secondary.opacity(0.7))
+
+                    Text("Supported formats: FLAC, ALAC, WAV, AIFF, MP3, AAC, OGG, WMA, DSD")
+                        .font(.caption)
+                        .foregroundColor(.secondary.opacity(0.5))
+                        .padding(.top, 4)
                 }
                 .multilineTextAlignment(.center)
             }
@@ -66,22 +71,10 @@ struct EmptyMusicLibraryView: View {
             Button(action: {
                 MediaScannerManager.shared.addFolder()
             }) {
-                HStack(spacing: 6) {
-                    Image(systemName: Icons.plusCircleFill)
-                        .font(.system(size: 16))
-                    Text("Add Music Folder")
-                        .font(.system(size: 14, weight: .medium))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.accentColor)
-                        .shadow(color: Color.accentColor.opacity(0.3), radius: 6, x: 0, y: 3)
-                )
+                Label("Add Music Folder", systemImage: Icons.plusCircleFill)
             }
-            .buttonStyle(PlainButtonStyle())
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
         }
         .transition(.opacity)
     }

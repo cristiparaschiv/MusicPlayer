@@ -15,9 +15,6 @@ extension String {
         return result.lowercased()
     }
 
-    func sanitizedForSQL() -> String {
-        return self.replacingOccurrences(of: "'", with: "''")
-    }
 }
 
 // MARK: - TimeInterval Extensions

@@ -1,6 +1,6 @@
 import Foundation
 
-struct Album {
+struct Album: Hashable, Identifiable {
     let id: Int64
     let title: String
     let titleSort: String

@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import SwiftUI
 import Combine
 
 class NowPlayingManager: ObservableObject {
@@ -8,7 +9,16 @@ class NowPlayingManager: ObservableObject {
     // MARK: - Published Properties
 
     @Published var currentTrack: Track?
-    @Published var artwork: NSImage?
+    @Published var artwork: NSImage? {
+        didSet {
+            if let image = artwork {
+                dominantColor = ColorExtractor.extractDominantColor(from: image)
+            } else {
+                dominantColor = nil
+            }
+        }
+    }
+    @Published var dominantColor: Color?
     @Published var artworkState: LoadingState = .idle
     @Published var lyrics: String?
     @Published var lyricsState: LoadingState = .idle
@@ -29,7 +39,6 @@ class NowPlayingManager: ObservableObject {
     private let lyricsManager = LyricsManager.shared
 
     private var cancellables = Set<AnyCancellable>()
-    private var playbackTimeTimer: Timer?
 
     private let nowPlayingQueue = DispatchQueue(label: "com.orangemusicplayer.nowplaying", qos: .userInitiated)
 
@@ -37,7 +46,6 @@ class NowPlayingManager: ObservableObject {
 
     private init() {
         setupNotificationObservers()
-        setupPlaybackTimeTimer()
         loadInitialState()
     }
 
@@ -277,16 +285,20 @@ class NowPlayingManager: ObservableObject {
             name: Constants.Notifications.trackFavoriteChanged,
             object: nil
         )
+
+        // Playback time updates (from PlayerManager's 0.5s timer)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handlePlaybackTimeChanged(_:)),
+            name: Constants.Notifications.playbackTimeChanged,
+            object: nil
+        )
     }
 
-    private func setupPlaybackTimeTimer() {
-        playbackTimeTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-
-            DispatchQueue.main.async {
-                self.currentTime = self.playerManager.currentTime
-                self.duration = self.playerManager.duration
-            }
+    @objc private func handlePlaybackTimeChanged(_ notification: Notification) {
+        DispatchQueue.main.async {
+            self.currentTime = self.playerManager.currentTime
+            self.duration = self.playerManager.duration
         }
     }
 
@@ -302,9 +314,10 @@ class NowPlayingManager: ObservableObject {
             self.queue = self.queueManager.currentQueue
             self.currentTrackIndex = self.queueManager.currentTrackIndex
 
-            // Load artwork for current track
+            // Load artwork and lyrics for current track
             if self.currentTrack != nil {
                 self.loadArtwork()
+                self.loadLyrics()
             }
         }
     }
@@ -325,7 +338,7 @@ class NowPlayingManager: ObservableObject {
                 // Load new data
                 if self.currentTrack != nil {
                     self.loadArtwork()
-                    // Don't auto-load lyrics, only when user opens lyrics view
+                    self.loadLyrics()
                 }
 
                 // Preload next track
@@ -356,6 +369,7 @@ class NowPlayingManager: ObservableObject {
     @objc private func handleQueueDidChange(_ notification: Notification) {
         DispatchQueue.main.async {
             self.queue = self.queueManager.currentQueue
+            self.currentTrackIndex = self.queueManager.currentTrackIndex
             self.isShuffleEnabled = self.queueManager.isShuffleEnabled
         }
     }
@@ -419,7 +433,6 @@ class NowPlayingManager: ObservableObject {
     // MARK: - Cleanup
 
     deinit {
-        playbackTimeTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
 }

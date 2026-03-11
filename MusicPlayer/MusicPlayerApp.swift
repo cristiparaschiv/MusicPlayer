@@ -19,12 +19,29 @@ struct MusicPlayerApp: App {
 
         // Initialize now playing manager
         _ = NowPlayingManager.shared
+
+        // Initialize system media integration (media keys + Now Playing info)
+        _ = SystemMediaIntegrationManager.shared
+
+        // Use overlay (thin, auto-hiding) scrollbars globally
+        UserDefaults.standard.set("WhenScrolling", forKey: "AppleShowScrollBars")
+    }
+
+    @AppStorage("appAppearance") private var appAppearance: String = "system"
+
+    private var colorScheme: ColorScheme? {
+        switch appAppearance {
+        case "light": return .light
+        case "dark": return .dark
+        default: return nil
+        }
     }
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .frame(minWidth: 1000, minHeight: 600)
+                .preferredColorScheme(colorScheme)
         }
         .defaultSize(width: 1200, height: 800)
         .commands {
@@ -33,6 +50,7 @@ struct MusicPlayerApp: App {
 
         Settings {
             SettingsView()
+                .preferredColorScheme(colorScheme)
         }
     }
 }
@@ -84,6 +102,18 @@ struct PlaybackCommands: Commands {
                 )
             }
             .keyboardShortcut("u", modifiers: [.command, .shift])
+
+            Divider()
+
+            Button("Mini Player") {
+                MiniPlayerWindowManager.shared.toggle()
+            }
+            .keyboardShortcut("m", modifiers: [.command, .shift])
+
+            Button("Equalizer") {
+                EQWindowManager.shared.toggle()
+            }
+            .keyboardShortcut("e", modifiers: [.command, .shift])
         }
     }
 }

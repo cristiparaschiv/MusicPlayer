@@ -229,6 +229,26 @@ struct SearchTrackRow: View {
             Button(track.isFavorite ? "Remove from Favorites" : "Add to Favorites") {
                 PlayerManager.shared.toggleFavorite(track: track)
             }
+
+            Menu("Add to Playlist") {
+                ForEach(PlaylistDAO().getAll(), id: \.id) { playlist in
+                    Button(playlist.name) {
+                        let dao = PlaylistDAO()
+                        dao.addTrack(playlistId: playlist.id, trackId: track.id)
+                        NotificationCenter.default.post(
+                            name: Constants.Notifications.playlistContentChanged,
+                            object: nil,
+                            userInfo: ["playlistId": playlist.id]
+                        )
+                    }
+                }
+            }
+
+            Divider()
+
+            Button("Show in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: track.filePath)])
+            }
         }
     }
 
@@ -251,7 +271,7 @@ struct SearchArtistGridItem: View {
     private let artworkManager = ArtworkManager.shared
 
     var body: some View {
-        NavigationLink(destination: ArtistDetailView(artist: artist)) {
+        NavigationLink(value: artist) {
             VStack(alignment: .leading, spacing: 8) {
                 // Artist image
                 ZStack {

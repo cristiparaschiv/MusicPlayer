@@ -13,13 +13,23 @@ struct SettingsView: View {
     @State private var isCrossfadeEnabled: Bool = false
     @State private var crossfadeDuration: Double = 3.0
     @State private var isGaplessEnabled: Bool = false
+    @State private var replayGainMode: ReplayGainMode = .off
 
     // Cache management
     @State private var showClearCacheAlert: Bool = false
     @State private var cacheSize: String = "Calculating..."
     @State private var isClearingCache: Bool = false
 
+    // Last.fm
+    @ObservedObject private var lastFM = LastFMManager.shared
+    @State private var lastFMUsername: String = ""
+    @State private var lastFMPassword: String = ""
+    @State private var lastFMError: String?
+    @State private var isConnectingLastFM: Bool = false
+    @State private var showVerifySheet: Bool = false
+
     @ObservedObject private var audioOutputManager = AudioOutputManager.shared
+    @ObservedObject private var scanner = MediaScannerManager.shared
 
     @Environment(\.dismiss)
     var dismiss
@@ -49,19 +59,6 @@ struct SettingsView: View {
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
-                HStack {
-                    Button(action: { dismiss() }) {
-                        Image(systemName: Icons.xmarkCircleFill)
-                            .font(.title2)
-                            .foregroundColor(.secondary)
-                    }
-                    .help("Dismiss")
-                    .buttonStyle(.plain)
-                    .focusable(false)
-                    
-                    Spacer()
-                }
-                
                 TabbedButtons(
                     items: SettingsTab.allCases,
                     selection: $selectedTab,
@@ -100,8 +97,40 @@ struct SettingsView: View {
         }
     }
     
+    @AppStorage("appAppearance") private var appAppearance: String = "system"
+
     private var GeneralTabView: some View {
+        ScrollView {
         VStack(alignment: .leading, spacing: 20) {
+            // Appearance Section
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Appearance")
+                    .font(.headline)
+                    .padding(.bottom, 4)
+
+                HStack {
+                    Text("Theme:")
+                        .font(.subheadline)
+
+                    Spacer()
+
+                    Picker("", selection: $appAppearance) {
+                        Text("System").tag("system")
+                        Text("Light").tag("light")
+                        Text("Dark").tag("dark")
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 240)
+                }
+
+                Text("Override the system appearance for this app only")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding()
+            .background(Color(nsColor: .controlBackgroundColor))
+            .cornerRadius(8)
+
             // Audio Output Section
             VStack(alignment: .leading, spacing: 12) {
                 Text("Audio Output")
@@ -123,7 +152,12 @@ struct SettingsView: View {
                         }
                     )) {
                         ForEach(audioOutputManager.availableDevices) { device in
-                            Text(device.name).tag(device as AudioDevice?)
+                            HStack(spacing: 4) {
+                                if device.isAirPlay {
+                                    Image(systemName: "airplayaudio")
+                                }
+                                Text(device.displayName)
+                            }.tag(device as AudioDevice?)
                         }
                     }
                     .frame(width: 300)
@@ -137,9 +171,46 @@ struct SettingsView: View {
                     .help("Refresh audio devices")
                 }
 
-                Text("Select the audio output device for playback")
+                if audioOutputManager.currentSampleRate > 0 {
+                    HStack {
+                        Text("Current Sample Rate:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(AudioOutputManager.formatSampleRate(audioOutputManager.currentSampleRate))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                Text("Select the audio output device for playback. AirPlay devices appear automatically.")
                     .font(.caption)
                     .foregroundColor(.secondary)
+
+                Divider()
+
+                // Sample Rate Switching
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Auto Sample Rate Switching", isOn: $audioOutputManager.isSampleRateSwitchingEnabled)
+                        .toggleStyle(.switch)
+
+                    Text("Automatically switch the output device sample rate to match the playing track for bit-perfect playback")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                // Hog Mode (Exclusive Access)
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Exclusive Mode (Hog Mode)", isOn: Binding(
+                        get: { audioOutputManager.isHogModeEnabled },
+                        set: { _ in audioOutputManager.toggleHogMode() }
+                    ))
+                    .toggleStyle(.switch)
+
+                    Text("Take exclusive access to the output device, preventing other apps from using it. Ensures uninterrupted, bit-perfect playback.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
             .padding()
             .background(Color(nsColor: .controlBackgroundColor))
@@ -206,6 +277,31 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
+
+                // ReplayGain
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("ReplayGain:")
+                            .font(.subheadline)
+
+                        Spacer()
+
+                        Picker("", selection: $replayGainMode) {
+                            ForEach(ReplayGainMode.allCases, id: \.self) { mode in
+                                Text(mode.displayName).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 200)
+                        .onChange(of: replayGainMode) { _, newValue in
+                            PlayerManager.shared.setReplayGainMode(newValue)
+                        }
+                    }
+
+                    Text("Normalize volume levels using ReplayGain tags embedded in your audio files")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
             .padding()
             .background(Color(nsColor: .controlBackgroundColor))
@@ -259,12 +355,74 @@ struct SettingsView: View {
                 Text("This will delete all cached artwork and lyrics. They will be re-downloaded when needed.")
             }
 
-            Spacer()
+            // Last.fm Section
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Last.fm Scrobbling")
+                    .font(.headline)
+                    .padding(.bottom, 4)
+
+                if lastFM.isAuthenticated {
+                    HStack {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                        Text("Connected as \(lastFM.username)")
+                            .font(.subheadline)
+                        Spacer()
+                        Button("Disconnect") {
+                            lastFM.logout()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    Toggle("Enable Scrobbling", isOn: Binding(
+                        get: { lastFM.scrobblingEnabled },
+                        set: { lastFM.scrobblingEnabled = $0 }
+                    ))
+                    .toggleStyle(.switch)
+
+                    Text("Tracks are scrobbled after 50% played or 4 minutes")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        TextField("Username", text: $lastFMUsername)
+                            .textFieldStyle(.roundedBorder)
+                        SecureField("Password", text: $lastFMPassword)
+                            .textFieldStyle(.roundedBorder)
+
+                        if let error = lastFMError {
+                            Text(error)
+                                .font(.caption)
+                                .foregroundColor(.red)
+                        }
+
+                        Button(action: connectLastFM) {
+                            if isConnectingLastFM {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Text("Connect")
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(lastFMUsername.isEmpty || lastFMPassword.isEmpty || isConnectingLastFM)
+                    }
+
+                    Text("Your password is sent directly to Last.fm and is not stored")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding()
+            .background(Color(nsColor: .controlBackgroundColor))
+            .cornerRadius(8)
+
         }
         .padding()
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
-    
+
     private var LibraryTabView: some View {
         VStack(spacing: 16) {
             // Header with action buttons
@@ -291,19 +449,59 @@ struct SettingsView: View {
                 } else {
                     List(selection: $selectedPaths) {
                         ForEach(libraryPaths, id: \.self) { path in
+                            let status = scanner.pathStatuses.first(where: { $0.path == path })
                             HStack(spacing: 12) {
-                                Image(systemName: Icons.folderFill)
+                                // Icon: network, unavailable, or local
+                                Image(systemName: status?.isNetworkVolume == true ? "network" :
+                                      status?.isAvailable == false ? "exclamationmark.triangle.fill" : Icons.folderFill)
                                     .font(.system(size: 16))
-                                    .foregroundColor(.accentColor)
+                                    .foregroundColor(status?.isAvailable == false ? .red :
+                                                     status?.isNetworkVolume == true ? .blue : .accentColor)
 
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(URL(fileURLWithPath: path).lastPathComponent)
-                                        .font(.system(size: 13, weight: .medium))
+                                    HStack(spacing: 6) {
+                                        Text(URL(fileURLWithPath: path).lastPathComponent)
+                                            .font(.system(size: 13, weight: .medium))
+
+                                        if status?.isNetworkVolume == true {
+                                            Text("Network")
+                                                .font(.system(size: 9, weight: .bold))
+                                                .padding(.horizontal, 4)
+                                                .padding(.vertical, 1)
+                                                .background(Color.blue.opacity(0.15))
+                                                .foregroundColor(.blue)
+                                                .cornerRadius(3)
+                                        }
+                                    }
 
                                     Text(path)
                                         .font(.system(size: 11))
                                         .foregroundColor(.secondary)
                                         .lineLimit(1)
+
+                                    // Scan status line
+                                    if let state = status?.scanState {
+                                        switch state {
+                                        case .scanning(let processed, let total):
+                                            HStack(spacing: 4) {
+                                                ProgressView()
+                                                    .controlSize(.mini)
+                                                Text("Scanning: \(processed)/\(total) files")
+                                                    .font(.system(size: 10))
+                                                    .foregroundColor(.orange)
+                                            }
+                                        case .complete(let count):
+                                            Text("\(count) files found")
+                                                .font(.system(size: 10))
+                                                .foregroundColor(.green)
+                                        case .unavailable:
+                                            Text("Unavailable — volume not mounted")
+                                                .font(.system(size: 10))
+                                                .foregroundColor(.red)
+                                        case .idle:
+                                            EmptyView()
+                                        }
+                                    }
                                 }
 
                                 Spacer()
@@ -339,10 +537,26 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(libraryPaths.isEmpty || isScanning)
+
+                Button(action: { showVerifySheet = true }) {
+                    Label("Verify Library", systemImage: "checkmark.shield")
+                }
+                .buttonStyle(.bordered)
+                .disabled(libraryPaths.isEmpty)
+
+                Button(action: updateFolderAccess) {
+                    Label("Update Folder Access", systemImage: "lock.open")
+                }
+                .buttonStyle(.bordered)
+                .disabled(libraryPaths.isEmpty)
+                .help("Re-authorize folders to enable metadata editing")
             }
             .padding()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .sheet(isPresented: $showVerifySheet) {
+            LibraryVerifierView()
+        }
     }
     
     private var AboutTabView: some View {
@@ -457,32 +671,7 @@ struct SettingsView: View {
                 }
                 .padding(.top, 8)
 
-                // Actions
-                VStack(spacing: 12) {
-                    Button(action: checkForUpdates) {
-                        Label("Check for Updates", systemImage: Icons.arrowClockwise)
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
-
-                    // Links section - uncomment and update URLs when ready
-                    /*
-                    HStack(spacing: 12) {
-                        Button(action: openGitHub) {
-                            Label("GitHub", systemImage: "arrow.up.forward.circle")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-
-                        Button(action: openWebsite) {
-                            Label("Website", systemImage: "arrow.up.forward.circle")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                    */
-                }
+                // Actions — updates handled by the App Store
 
                 Spacer()
             }
@@ -499,28 +688,6 @@ struct SettingsView: View {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
     }
 
-    private func checkForUpdates() {
-        // Placeholder for update checking functionality
-        let alert = NSAlert()
-        alert.messageText = "Check for Updates"
-        alert.informativeText = "You are using the latest version of Orange Music Player."
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
-    }
-
-    private func openGitHub() {
-        if let url = URL(string: "https://github.com") {
-            NSWorkspace.shared.open(url)
-        }
-    }
-
-    private func openWebsite() {
-        if let url = URL(string: "https://example.com") {
-            NSWorkspace.shared.open(url)
-        }
-    }
-    
     private var tabbedButtonStyle: TabbedButtonStyle {
         if #available(macOS 26.0, *) {
             return .moderncompact
@@ -533,12 +700,14 @@ struct SettingsView: View {
 
     private func loadData() {
         libraryPaths = MediaScannerManager.shared.getLibraryPaths()
+        scanner.refreshPathStatuses()
     }
 
     private func loadPlaybackSettings() {
         isCrossfadeEnabled = PlayerManager.shared.isCrossfadeEnabled
         crossfadeDuration = PlayerManager.shared.crossfadeDuration
         isGaplessEnabled = PlayerManager.shared.isGaplessEnabled
+        replayGainMode = PlayerManager.shared.replayGainMode
     }
 
     private func addFolder() {
@@ -572,6 +741,10 @@ struct SettingsView: View {
                 isScanning = false
             }
         }
+    }
+
+    private func updateFolderAccess() {
+        SecurityBookmarkManager.shared.migrateToReadWrite { _ in }
     }
 
     // MARK: - Cache Management
@@ -622,6 +795,21 @@ struct SettingsView: View {
         formatter.allowedUnits = [.useKB, .useMB, .useGB]
         formatter.countStyle = .file
         return formatter.string(fromByteCount: bytes)
+    }
+
+    private func connectLastFM() {
+        isConnectingLastFM = true
+        lastFMError = nil
+        lastFM.authenticate(username: lastFMUsername, password: lastFMPassword) { result in
+            isConnectingLastFM = false
+            switch result {
+            case .success:
+                lastFMUsername = ""
+                lastFMPassword = ""
+            case .failure(let error):
+                lastFMError = error.localizedDescription
+            }
+        }
     }
 
     private func clearCache() {

@@ -4,10 +4,16 @@ struct ArtistDetailView: View {
     let artist: Artist
     @State private var artwork: NSImage?
     @State private var tracksInfo: ArtistTracksInfo?
+    @State private var albums: [Album] = []
+    @State private var showAllAlbums = false
+    @State private var addedToQueueMessage: String?
+    @State private var hasLoadedData = false
 
     private let artworkManager = ArtworkManager.shared
     private let trackDAO = TrackDAO()
     private let albumDAO = AlbumDAO()
+
+    private let initialAlbumCount = 6
 
     @Environment(\.dismiss) private var dismiss
 
@@ -38,13 +44,6 @@ struct ArtistDetailView: View {
 
                 // Artist info
                 VStack (alignment: .leading, spacing: 14) {
-                    // "ARTIST" label
-                    Text("ARTIST")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .fontWeight(.semibold)
-                        .textCase(.uppercase)
-
                     // Artist name
                     Text(artist.name)
                         .font(.largeTitle)
@@ -53,7 +52,6 @@ struct ArtistDetailView: View {
 
                     // Stats
                     HStack(spacing: 8) {
-                        let albums = albumDAO.getByArtistId(artistId: artist.id)
                         Text("\(albums.count) \(albums.count == 1 ? "album" : "albums")")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
@@ -88,7 +86,7 @@ struct ArtistDetailView: View {
                             HStack(spacing: 6) {
                                 Image(systemName: Icons.playFill)
                                     .font(.system(size: 14))
-                                Text("Play All")
+                                Text("Play")
                                     .font(.system(size: 14, weight: .semibold))
                             }
                             .padding(.horizontal, 20)
@@ -107,13 +105,24 @@ struct ArtistDetailView: View {
                             .padding(.vertical, 10)
                         }
                         .buttonStyle(.bordered)
+
+                        Button(action: { addToQueue() }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: Icons.plusCircle)
+                                    .font(.system(size: 14))
+                                Text("Add to Queue")
+                                    .font(.system(size: 14, weight: .semibold))
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 10)
+                        }
+                        .buttonStyle(.bordered)
                     }
                     .padding(.top, 8)
                 }
 
                 Spacer()
             }
-            .background(.regularMaterial)
             .padding(16)
 
             // Artist albums/tracks view
@@ -121,7 +130,6 @@ struct ArtistDetailView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     if tracksInfo != nil {
                         // Display albums by this artist
-                        let albums = albumDAO.getByArtistId(artistId: artist.id)
                         if !albums.isEmpty {
                             VStack(alignment: .leading, spacing: 12) {
                                 Text("Albums")
@@ -129,12 +137,28 @@ struct ArtistDetailView: View {
                                     .fontWeight(.bold)
                                     .padding(.horizontal)
 
-                                AlbumGrid(albums: albums)
+                                let displayedAlbums = showAllAlbums ? albums : Array(albums.prefix(initialAlbumCount))
+                                AlbumGrid(albums: displayedAlbums)
                                     .padding(.horizontal)
+
+                                if albums.count > initialAlbumCount {
+                                    Button(action: {
+                                        withAnimation(.easeInOut(duration: 0.25)) {
+                                            showAllAlbums.toggle()
+                                        }
+                                    }) {
+                                        Text(showAllAlbums ? "Show Less" : "Show All \(albums.count) Albums")
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(.accentColor)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .padding(.horizontal)
+                                }
                             }
                         }
 
-                        // Display top tracks (most played)
+                        // Display top tracks (only if there's actual play data)
                         if let topTracks = getTopTracks(), !topTracks.isEmpty {
                             VStack(alignment: .leading, spacing: 12) {
                                 Text("Top Tracks")
@@ -145,7 +169,9 @@ struct ArtistDetailView: View {
                                 VStack(spacing: 0) {
                                     ForEach(Array(topTracks.prefix(10).enumerated()), id: \.element.id) { index, track in
                                         TrackRow(track: track, index: index + 1)
-                                            .background(Color(nsColor: .controlBackgroundColor).opacity(index % 2 == 0 ? 0 : 0.3))
+                                        if index < min(topTracks.count, 10) - 1 {
+                                            Divider().padding(.leading, 54)
+                                        }
                                     }
                                 }
                             }
@@ -160,12 +186,28 @@ struct ArtistDetailView: View {
 
                             ArtistSongsView(artist: artist)
                         }
-                    } else {
+                    } else if !hasLoadedData {
                         ProgressView()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        Text("No tracks found for this artist")
+                            .foregroundColor(.secondary)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 }
                 .padding(.vertical)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if let message = addedToQueueMessage {
+                Text(message)
+                    .font(.caption)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    .padding(.bottom, 8)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .animation(.easeInOut(duration: 0.3), value: addedToQueueMessage)
             }
         }
         .onAppear() {
@@ -183,11 +225,14 @@ struct ArtistDetailView: View {
             }
         }
 
-        // Load tracks info
+        // Load albums and tracks info
         DispatchQueue.global(qos: .userInitiated).async {
+            let loadedAlbums = albumDAO.getByArtistId(artistId: artist.id)
             let info = trackDAO.getArtistTracksInfo(artistId: artist.id)
             DispatchQueue.main.async {
+                albums = loadedAlbums
                 tracksInfo = info
+                hasLoadedData = true
             }
         }
     }
@@ -209,11 +254,23 @@ struct ArtistDetailView: View {
         PlayerManager.shared.play(track: shuffledTracks[0])
     }
 
+    private func addToQueue() {
+        guard let tracksInfo = tracksInfo, !tracksInfo.tracks.isEmpty else { return }
+        QueueManager.shared.addToQueue(tracksInfo.tracks)
+        addedToQueueMessage = "\(tracksInfo.tracks.count) track\(tracksInfo.tracks.count == 1 ? "" : "s") added to queue"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            addedToQueueMessage = nil
+        }
+    }
+
     private func getTopTracks() -> [Track]? {
         guard let tracksInfo = tracksInfo else { return nil }
 
-        // Sort tracks by play count (descending)
-        return tracksInfo.tracks.sorted { $0.playCount > $1.playCount }
+        // Only show top tracks if there's actual play data
+        let playedTracks = tracksInfo.tracks.filter { $0.playCount > 0 }
+        guard !playedTracks.isEmpty else { return nil }
+
+        return playedTracks.sorted { $0.playCount > $1.playCount }
     }
 }
 
@@ -221,6 +278,7 @@ struct ArtistDetailView: View {
 struct TrackRow: View {
     let track: Track
     let index: Int
+    @State private var trackToEdit: Track?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -264,6 +322,46 @@ struct TrackRow: View {
             Button("Play Next") {
                 QueueManager.shared.insertNext([track])
             }
+
+            Divider()
+
+            Button(track.isFavorite ? "Remove from Favorites" : "Add to Favorites") {
+                PlayerManager.shared.toggleFavorite(track: track)
+            }
+
+            Menu("Add to Playlist") {
+                Button("Create New Playlist...") {
+                    PlaylistMenuHelper.shared.showCreatePlaylistDialog(tracks: [track])
+                }
+                let playlists = PlaylistDAO().getAll()
+                if !playlists.isEmpty {
+                    Divider()
+                    ForEach(playlists, id: \.id) { playlist in
+                        Button(playlist.name) {
+                            let dao = PlaylistDAO()
+                            dao.addTrack(playlistId: playlist.id, trackId: track.id)
+                            NotificationCenter.default.post(
+                                name: Constants.Notifications.playlistContentChanged,
+                                object: nil,
+                                userInfo: ["playlistId": playlist.id]
+                            )
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            Button("Edit Info...") {
+                trackToEdit = track
+            }
+
+            Button("Show in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: track.filePath)])
+            }
+        }
+        .sheet(item: $trackToEdit) { track in
+            TrackEditorView(track: track)
         }
     }
 }

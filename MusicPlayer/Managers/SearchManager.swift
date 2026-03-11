@@ -38,18 +38,16 @@ class SearchManager: ObservableObject {
             return
         }
 
-        print("[SearchManager] performSearch called with query: '\(searchText)'")
 
         // Create new search task with debounce
         searchTask = Task { [weak self] in
             guard let self = self else { return }
 
-            // Debounce: wait 300ms
-            try? await Task.sleep(nanoseconds: 300_000_000)
+            // Debounce: wait 150ms
+            try? await Task.sleep(nanoseconds: 150_000_000)
 
             // Check if task was cancelled
             guard !Task.isCancelled else {
-                print("[SearchManager] Task was cancelled")
                 return
             }
 
@@ -58,34 +56,28 @@ class SearchManager: ObservableObject {
             }
 
             let query = self.searchText
-            print("[SearchManager] Searching for: '\(query)'")
 
             // Perform searches on background thread
             let tracks = await Task.detached {
                 let results = self.trackDAO.search(query: query, limit: 100)
-                print("[SearchManager] Track search returned \(results.count) results")
                 return results
             }.value
 
             let albums = await Task.detached {
                 let results = self.albumDAO.search(query: query, limit: 100)
-                print("[SearchManager] Album search returned \(results.count) results")
                 return results
             }.value
 
             let artists = await Task.detached {
                 let results = self.artistDAO.search(query: query, limit: 100)
-                print("[SearchManager] Artist search returned \(results.count) results")
                 return results
             }.value
 
             // Check if task was cancelled before updating results
             guard !Task.isCancelled else {
-                print("[SearchManager] Task was cancelled before updating results")
                 return
             }
 
-            print("[SearchManager] Total results - Tracks: \(tracks.count), Albums: \(albums.count), Artists: \(artists.count)")
 
             await MainActor.run {
                 self.searchResults = SearchResults(
@@ -94,7 +86,6 @@ class SearchManager: ObservableObject {
                     artists: artists
                 )
                 self.isSearching = false
-                print("[SearchManager] Search results updated. isEmpty: \(self.searchResults.isEmpty)")
             }
         }
     }

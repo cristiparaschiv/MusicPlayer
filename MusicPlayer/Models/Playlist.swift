@@ -33,17 +33,3 @@ struct Playlist: Hashable {
         hasher.combine(id)
     }
 }
-
-struct PlaylistTrack {
-    let playlistId: Int64
-    let trackId: Int64
-    let position: Int
-    let dateAdded: Date
-
-    init(playlistId: Int64, trackId: Int64, position: Int, dateAdded: Date = Date()) {
-        self.playlistId = playlistId
-        self.trackId = trackId
-        self.position = position
-        self.dateAdded = dateAdded
-    }
-}

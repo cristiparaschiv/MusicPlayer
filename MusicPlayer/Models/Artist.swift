@@ -1,6 +1,6 @@
 import Foundation
 
-struct Artist {
+struct Artist: Hashable, Identifiable {
     let id: Int64
     let name: String
     let nameSort: String

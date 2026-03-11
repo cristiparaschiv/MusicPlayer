@@ -1,6 +1,9 @@
 import Foundation
 import SQLite3
 
+// SQLITE_TRANSIENT tells SQLite to make its own copy of the string data
+private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
 class DatabaseManager {
     static let shared = DatabaseManager()
 
@@ -19,7 +22,9 @@ class DatabaseManager {
             .path
 
         if sqlite3_open(dbPath, &db) != SQLITE_OK {
+            #if DEBUG
             print("Error opening database at \(dbPath)")
+            #endif
             return
         }
 
@@ -124,6 +129,7 @@ class DatabaseManager {
         CREATE INDEX IF NOT EXISTS idx_tracks_last_played ON tracks(last_played);
         CREATE INDEX IF NOT EXISTS idx_tracks_play_count ON tracks(play_count);
         CREATE INDEX IF NOT EXISTS idx_tracks_is_favorite ON tracks(is_favorite);
+        CREATE INDEX IF NOT EXISTS idx_tracks_file_path ON tracks(file_path);
         """
 
         let createPlaylistsTable = """
@@ -173,6 +179,17 @@ class DatabaseManager {
         CREATE INDEX IF NOT EXISTS idx_play_history_played_at ON play_history(played_at DESC);
         """
 
+        let createScrobbleQueueTable = """
+        CREATE TABLE IF NOT EXISTS lastfm_scrobble_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            track_title TEXT NOT NULL,
+            artist TEXT NOT NULL,
+            album TEXT,
+            timestamp REAL NOT NULL,
+            created_at REAL NOT NULL
+        );
+        """
+
         let tables = [
             createArtistsTable,
             createGenresTable,
@@ -182,12 +199,106 @@ class DatabaseManager {
             createPlaylistsTable,
             createPlaylistTracksTable,
             createLibraryPathsTable,
-            createPlayHistoryTable
+            createPlayHistoryTable,
+            createScrobbleQueueTable
         ]
 
         for sql in tables {
             execute(sql: sql)
         }
+
+        runMigrations()
+    }
+
+    private func runMigrations() {
+        let checkColumn = "PRAGMA table_info(tracks)"
+        let columns = query(sql: checkColumn)
+        let columnNames = Set(columns.compactMap { $0["name"] as? String })
+
+        if !columnNames.contains("lyrics") {
+            execute(sql: "ALTER TABLE tracks ADD COLUMN lyrics TEXT")
+        }
+        if !columnNames.contains("replay_gain_track") {
+            execute(sql: "ALTER TABLE tracks ADD COLUMN replay_gain_track REAL")
+        }
+        if !columnNames.contains("replay_gain_album") {
+            execute(sql: "ALTER TABLE tracks ADD COLUMN replay_gain_album REAL")
+        }
+        if !columnNames.contains("channel_count") {
+            execute(sql: "ALTER TABLE tracks ADD COLUMN channel_count INTEGER")
+        }
+        if !columnNames.contains("format_name") {
+            execute(sql: "ALTER TABLE tracks ADD COLUMN format_name TEXT")
+        }
+        if !columnNames.contains("bit_depth") {
+            execute(sql: "ALTER TABLE tracks ADD COLUMN bit_depth INTEGER")
+        }
+        if !columnNames.contains("start_time") {
+            execute(sql: "ALTER TABLE tracks ADD COLUMN start_time REAL")
+        }
+        if !columnNames.contains("end_time") {
+            execute(sql: "ALTER TABLE tracks ADD COLUMN end_time REAL")
+        }
+        if !columnNames.contains("last_scan_time") {
+            execute(sql: "ALTER TABLE tracks ADD COLUMN last_scan_time REAL")
+        }
+
+        // FTS5 virtual table for fast search
+        execute(sql: """
+            CREATE VIRTUAL TABLE IF NOT EXISTS tracks_fts USING fts5(
+                title, artist_name, album_title, genre_name,
+                content='tracks', content_rowid='id'
+            )
+        """)
+
+        // Triggers to keep FTS in sync
+        execute(sql: """
+            CREATE TRIGGER IF NOT EXISTS tracks_ai AFTER INSERT ON tracks BEGIN
+                INSERT INTO tracks_fts(rowid, title, artist_name, album_title, genre_name)
+                VALUES (new.id, new.title, new.artist_name, new.album_title, new.genre_name);
+            END
+        """)
+        execute(sql: """
+            CREATE TRIGGER IF NOT EXISTS tracks_ad AFTER DELETE ON tracks BEGIN
+                INSERT INTO tracks_fts(tracks_fts, rowid, title, artist_name, album_title, genre_name)
+                VALUES ('delete', old.id, old.title, old.artist_name, old.album_title, old.genre_name);
+            END
+        """)
+        execute(sql: """
+            CREATE TRIGGER IF NOT EXISTS tracks_au AFTER UPDATE ON tracks BEGIN
+                INSERT INTO tracks_fts(tracks_fts, rowid, title, artist_name, album_title, genre_name)
+                VALUES ('delete', old.id, old.title, old.artist_name, old.album_title, old.genre_name);
+                INSERT INTO tracks_fts(rowid, title, artist_name, album_title, genre_name)
+                VALUES (new.id, new.title, new.artist_name, new.album_title, new.genre_name);
+            END
+        """)
+
+    }
+
+    func rebuildFTSIndex() {
+        execute(sql: "INSERT OR IGNORE INTO tracks_fts(tracks_fts) VALUES('rebuild')")
+    }
+
+    func disableFTSTriggers() {
+        execute(sql: "DROP TRIGGER IF EXISTS tracks_ai")
+        execute(sql: "DROP TRIGGER IF EXISTS tracks_au")
+    }
+
+    func enableFTSTriggers() {
+        execute(sql: """
+            CREATE TRIGGER IF NOT EXISTS tracks_ai AFTER INSERT ON tracks BEGIN
+                INSERT INTO tracks_fts(rowid, title, artist_name, album_title, genre_name)
+                VALUES (new.id, new.title, new.artist_name, new.album_title, new.genre_name);
+            END
+        """)
+        execute(sql: """
+            CREATE TRIGGER IF NOT EXISTS tracks_au AFTER UPDATE ON tracks BEGIN
+                INSERT INTO tracks_fts(tracks_fts, rowid, title, artist_name, album_title, genre_name)
+                VALUES ('delete', old.id, old.title, old.artist_name, old.album_title, old.genre_name);
+                INSERT INTO tracks_fts(rowid, title, artist_name, album_title, genre_name)
+                VALUES (new.id, new.title, new.artist_name, new.album_title, new.genre_name);
+            END
+        """)
     }
 
     func execute(sql: String, parameters: [Any] = []) {
@@ -196,7 +307,9 @@ class DatabaseManager {
 
             if sqlite3_prepare_v2(db, sql, -1, &statement, nil) != SQLITE_OK {
                 let error = String(cString: sqlite3_errmsg(db))
+                #if DEBUG
                 print("Error preparing statement: \(error)")
+                #endif
                 return
             }
 
@@ -210,7 +323,7 @@ class DatabaseManager {
 
                 switch param {
                 case let value as String:
-                    sqlite3_bind_text(statement, bindIndex, (value as NSString).utf8String, -1, nil)
+                    sqlite3_bind_text(statement, bindIndex, (value as NSString).utf8String, -1, SQLITE_TRANSIENT)
                 case let value as Int:
                     sqlite3_bind_int64(statement, bindIndex, Int64(value))
                 case let value as Int64:
@@ -228,7 +341,9 @@ class DatabaseManager {
 
             if sqlite3_step(statement) != SQLITE_DONE {
                 let error = String(cString: sqlite3_errmsg(db))
+                #if DEBUG
                 print("Error executing statement: \(error)")
+                #endif
             }
         }
     }
@@ -241,8 +356,10 @@ class DatabaseManager {
 
             if sqlite3_prepare_v2(db, sql, -1, &statement, nil) != SQLITE_OK {
                 let error = String(cString: sqlite3_errmsg(db))
+                #if DEBUG
                 print("[DatabaseManager] Error preparing query: \(error)")
                 print("[DatabaseManager] SQL: \(sql)")
+                #endif
                 return
             }
 
@@ -256,7 +373,7 @@ class DatabaseManager {
 
                 switch param {
                 case let value as String:
-                    sqlite3_bind_text(statement, bindIndex, (value as NSString).utf8String, -1, nil)
+                    sqlite3_bind_text(statement, bindIndex, (value as NSString).utf8String, -1, SQLITE_TRANSIENT)
                 case let value as Int:
                     sqlite3_bind_int64(statement, bindIndex, Int64(value))
                 case let value as Int64:
@@ -304,8 +421,80 @@ class DatabaseManager {
         return results
     }
 
+    /// Execute an INSERT and return the last insert row ID atomically
+    @discardableResult
+    func executeInsert(sql: String, parameters: [Any] = []) -> Int64 {
+        var rowId: Int64 = 0
+        dbQueue.sync {
+            var statement: OpaquePointer?
+
+            if sqlite3_prepare_v2(db, sql, -1, &statement, nil) != SQLITE_OK {
+                let error = String(cString: sqlite3_errmsg(db))
+                #if DEBUG
+                print("Error preparing statement: \(error)")
+                #endif
+                return
+            }
+
+            defer {
+                sqlite3_finalize(statement)
+            }
+
+            for (index, param) in parameters.enumerated() {
+                let bindIndex = Int32(index + 1)
+
+                switch param {
+                case let value as String:
+                    sqlite3_bind_text(statement, bindIndex, (value as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                case let value as Int:
+                    sqlite3_bind_int64(statement, bindIndex, Int64(value))
+                case let value as Int64:
+                    sqlite3_bind_int64(statement, bindIndex, value)
+                case let value as Double:
+                    sqlite3_bind_double(statement, bindIndex, value)
+                case let value as Bool:
+                    sqlite3_bind_int(statement, bindIndex, value ? 1 : 0)
+                case is NSNull:
+                    sqlite3_bind_null(statement, bindIndex)
+                default:
+                    sqlite3_bind_null(statement, bindIndex)
+                }
+            }
+
+            if sqlite3_step(statement) != SQLITE_DONE {
+                let error = String(cString: sqlite3_errmsg(db))
+                #if DEBUG
+                print("Error executing statement: \(error)")
+                #endif
+            }
+
+            rowId = sqlite3_last_insert_rowid(db)
+        }
+        return rowId
+    }
+
+    func beginTransaction() {
+        dbQueue.sync {
+            sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, nil)
+        }
+    }
+
+    func commitTransaction() {
+        dbQueue.sync {
+            sqlite3_exec(db, "COMMIT", nil, nil, nil)
+        }
+    }
+
+    func rollbackTransaction() {
+        dbQueue.sync {
+            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+        }
+    }
+
     func lastInsertRowId() -> Int64 {
-        return sqlite3_last_insert_rowid(db)
+        return dbQueue.sync {
+            sqlite3_last_insert_rowid(db)
+        }
     }
 
     func getLibraryStats() -> (tracks: Int, albums: Int, artists: Int, totalDuration: TimeInterval) {

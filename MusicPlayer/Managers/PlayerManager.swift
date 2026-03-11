@@ -20,6 +20,7 @@ class PlayerManager: NSObject {
     private var _isCrossfadeEnabled: Bool = false
     private var _crossfadeDuration: TimeInterval = Constants.defaultCrossfadeDuration
     private var _isGaplessEnabled: Bool = true
+    private var _replayGainMode: ReplayGainMode = .off
 
     private let stateLock = NSLock()
     private let playerQueue = DispatchQueue(label: "com.orangemusicplayer.player", qos: .userInitiated)
@@ -30,11 +31,16 @@ class PlayerManager: NSObject {
 
     private var playbackTimer: Timer?
     private var crossfadeTimer: Timer?
-    private var isCrossfading: Bool = false
+    private var _isCrossfading: Bool = false
+    private var isCrossfading: Bool {
+        get { stateLock.lock(); defer { stateLock.unlock() }; return _isCrossfading }
+        set { stateLock.lock(); _isCrossfading = newValue; stateLock.unlock() }
+    }
 
     private let trackDAO = TrackDAO()
     private let playHistoryDAO = PlayHistoryDAO()
     private var currentPlayHistoryId: Int64?
+    private var previousTrackForScrobble: Track?
 
     // MARK: - Initialization
 
@@ -82,7 +88,10 @@ class PlayerManager: NSObject {
     }
 
     var currentTime: TimeInterval {
-        guard let player = audioPlayer, player.isPlaying else {
+        stateLock.lock()
+        let player = audioPlayer
+        stateLock.unlock()
+        guard let player = player, player.isPlaying else {
             return 0
         }
         return player.currentTime ?? 0
@@ -108,6 +117,12 @@ class PlayerManager: NSObject {
         stateLock.lock()
         defer { stateLock.unlock() }
         return _isGaplessEnabled
+    }
+
+    var replayGainMode: ReplayGainMode {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return _replayGainMode
     }
 
     var isShuffleEnabled: Bool {
@@ -137,7 +152,9 @@ class PlayerManager: NSObject {
                     self.notifyPlaybackStateChanged()
                     self.startPlaybackTimer()
                 } catch {
+                    #if DEBUG
                     print("Failed to resume playback: \(error)")
+                    #endif
                     self.stateLock.unlock()
                 }
                 return
@@ -212,6 +229,9 @@ class PlayerManager: NSObject {
     func stop() {
         playerQueue.async { [weak self] in
             guard let self = self else { return }
+
+            // Finalize stats for the current track
+            self.finalizeCurrentPlay()
 
             // Invalidate timers first
             DispatchQueue.main.async {
@@ -304,12 +324,15 @@ class PlayerManager: NSObject {
             self.stateLock.lock()
             self._volume = clampedVolume
 
-            // Apply volume to AudioPlayer
+            // Apply volume to AudioPlayer (with ReplayGain)
             if let player = self.audioPlayer {
+                let vol = self.effectiveVolume(for: self._currentTrack)
                 do {
-                    try player.setVolume(clampedVolume)
+                    try player.setVolume(vol)
                 } catch {
+                    #if DEBUG
                     print("Failed to set volume: \(error)")
+                    #endif
                 }
             }
 
@@ -344,8 +367,11 @@ class PlayerManager: NSObject {
         }
     }
 
+    private var seekingDisabledForCurrentTrack = false
+
     private func performSeekOnQueue(_ time: TimeInterval) {
         guard let player = audioPlayer else { return }
+        guard !seekingDisabledForCurrentTrack else { return }
 
         let duration = self.duration
         let clampedTime = min(max(0.0, time), duration)
@@ -354,7 +380,11 @@ class PlayerManager: NSObject {
         let seekSucceeded = player.seek(time: clampedTime)
 
         if !seekSucceeded {
+            seekingDisabledForCurrentTrack = true
+            #if DEBUG
             print("Seek failed: seeking not supported for this format")
+            #endif
+            return
         }
 
         DispatchQueue.main.async {
@@ -416,6 +446,17 @@ class PlayerManager: NSObject {
         stateLock.unlock()
 
         UserDefaults.standard.set(enabled, forKey: Constants.UserDefaultsKeys.gaplessPlaybackEnabled)
+    }
+
+    func setReplayGainMode(_ mode: ReplayGainMode) {
+        stateLock.lock()
+        _replayGainMode = mode
+        stateLock.unlock()
+
+        UserDefaults.standard.set(mode.rawValue, forKey: Constants.UserDefaultsKeys.replayGainMode)
+
+        // Re-apply volume with new ReplayGain setting
+        applyVolumeWithReplayGain()
     }
 
     // MARK: - Favorites
@@ -507,12 +548,83 @@ class PlayerManager: NSObject {
         return trackDAO.getById(id: track.id)?.playCount ?? 0
     }
 
+    // MARK: - ReplayGain
+
+    private func effectiveVolume(for track: Track?) -> Float {
+        let baseVolume = _volume
+        guard let track = track else { return baseVolume }
+
+        let gainDB: Double?
+        switch _replayGainMode {
+        case .off:
+            return baseVolume
+        case .track:
+            gainDB = track.replayGainTrackGain
+        case .album:
+            gainDB = track.replayGainAlbumGain ?? track.replayGainTrackGain
+        }
+
+        guard let gain = gainDB else { return baseVolume }
+
+        // Convert dB gain to linear multiplier and apply to volume
+        let multiplier = Float(pow(10.0, gain / 20.0))
+        return min(max(0.0, baseVolume * multiplier), 1.0)
+    }
+
+    private func applyVolumeWithReplayGain() {
+        playerQueue.async { [weak self] in
+            guard let self = self, let player = self.audioPlayer else { return }
+            let vol = self.effectiveVolume(for: self._currentTrack)
+            do {
+                try player.setVolume(vol)
+            } catch {
+                #if DEBUG
+                print("Failed to apply ReplayGain volume: \(error)")
+                #endif
+            }
+        }
+    }
+
+    /// Strip CUE virtual path suffix (e.g., "file.flac#track01" → "file.flac")
+    /// Match sample rate synchronously using CoreAudio directly (no @MainActor needed)
+    private static func matchSampleRateSync(trackSampleRate: Int?) {
+        guard UserDefaults.standard.bool(forKey: "sampleRateSwitchingEnabled"),
+              let trackRate = trackSampleRate, trackRate > 0,
+              let device = AudioOutputManager.fetchCurrentDevice() else { return }
+
+        let targetRate = Double(trackRate)
+        let currentRate = AudioOutputManager.getDeviceSampleRate(device.id)
+
+        guard abs(currentRate - targetRate) > 1.0 else { return }
+
+        let supportedRates = AudioOutputManager.getSupportedSampleRates(device.id)
+        guard supportedRates.contains(where: { $0.mMinimum <= targetRate && targetRate <= $0.mMaximum }) else { return }
+
+        if AudioOutputManager.setDeviceSampleRate(device.id, sampleRate: targetRate) {
+            DispatchQueue.main.async {
+                AudioOutputManager.shared.currentSampleRate = targetRate
+            }
+        }
+    }
+
+    static func actualFilePath(for track: Track) -> String {
+        let path = track.filePath
+        if let hashIndex = path.lastIndex(of: "#"),
+           path[hashIndex...].hasPrefix("#track") {
+            return String(path[..<hashIndex])
+        }
+        return path
+    }
+
     // MARK: - Private Methods - Player Cleanup
 
     /// Safely cleanup an AudioPlayer by stopping it and delaying deallocation
     /// This prevents crashes from internal AudioPlayerNode threads accessing freed memory
     private func safeCleanupPlayer(_ player: AudioPlayer?) {
         guard let player = player else { return }
+
+        // Remove EQ node tracking for this player's engine
+        EQManager.shared.removeEQNode(for: player.audioEngine)
 
         // Stop the player first
         player.stop()
@@ -523,7 +635,8 @@ class PlayerManager: NSObject {
         cleanupLock.unlock()
 
         // Delay cleanup to allow internal threads to finish
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        // Hi-res decoders may need more time to wind down
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2.0) { [weak self] in
             guard let self = self else { return }
 
             self.cleanupLock.lock()
@@ -536,8 +649,24 @@ class PlayerManager: NSObject {
 
     // MARK: - Private Methods - Playback
 
+    /// Finalize current play history entry before transitioning to another track
+    private func finalizeCurrentPlay() {
+        guard let playId = currentPlayHistoryId, let track = _currentTrack else { return }
+        let currentTime = self.currentTime
+        let duration = track.duration
+        if duration > 0 && currentTime / duration > 0.8 {
+            playHistoryDAO.markCompleted(playId: playId)
+        }
+        currentPlayHistoryId = nil
+    }
+
     private func playTrack(_ track: Track) {
         // Must be called from playerQueue
+
+        seekingDisabledForCurrentTrack = false
+
+        // Finalize stats for the track we're leaving
+        finalizeCurrentPlay()
 
         let shouldCrossfade = _isCrossfadeEnabled && audioPlayer != nil && audioPlayer!.isPlaying
 
@@ -565,25 +694,36 @@ class PlayerManager: NSObject {
         }
         isCrossfading = false
 
-        // Create URL for the track
-        let url = URL(fileURLWithPath: track.filePath)
+        // Match output sample rate to track before playback
+        Self.matchSampleRateSync(trackSampleRate: track.sampleRate)
+
+        // Create URL for the track (strip CUE virtual path suffix)
+        let url = URL(fileURLWithPath: Self.actualFilePath(for: track))
 
         // Create new AudioPlayer
         let player = AudioPlayer()
 
         do {
-            // Setup completion callback BEFORE playing
+            // Setup delegate BEFORE playing — reconfigureProcessingGraph
+            // will be called by SFBAudioEngine to insert our EQ node
             player.delegate = self
 
             // Play the track
             try player.play(url)
 
-            // Set volume after starting playback
-            try player.setVolume(_volume)
+            // Set volume after starting playback (with ReplayGain)
+            try player.setVolume(effectiveVolume(for: track))
+
+            // Seek to start time for CUE tracks
+            if let startTime = track.startTime, startTime > 0 {
+                _ = player.seek(time: startTime)
+            }
 
             audioPlayer = player
         } catch {
+            #if DEBUG
             print("Failed to start playback: \(error)")
+            #endif
             stateLock.lock()
             _playbackState = .stopped
             stateLock.unlock()
@@ -597,6 +737,13 @@ class PlayerManager: NSObject {
 
         // Record play history immediately
         currentPlayHistoryId = playHistoryDAO.recordPlay(trackId: track.id)
+
+        // Last.fm: update now playing + scrobble previous track
+        if let prevTrack = previousTrackForScrobble {
+            LastFMManager.shared.scrobbleIfEligible(track: prevTrack)
+        }
+        previousTrackForScrobble = track
+        LastFMManager.shared.updateNowPlaying(track: track)
 
         // Update play count after a few seconds (to avoid counting skips)
         DispatchQueue.global().asyncAfter(deadline: .now() + 5.0) { [weak self] in
@@ -628,14 +775,18 @@ class PlayerManager: NSObject {
         // Get the crossfade duration
         let duration = _crossfadeDuration
 
-        // Create URL for the new track
-        let url = URL(fileURLWithPath: track.filePath)
+        // Match output sample rate to track before playback
+        Self.matchSampleRateSync(trackSampleRate: track.sampleRate)
+
+        // Create URL for the new track (strip CUE virtual path suffix)
+        let url = URL(fileURLWithPath: Self.actualFilePath(for: track))
 
         // Create a new AudioPlayer for the incoming track
         let newPlayer = AudioPlayer()
 
         do {
-            // Setup completion callbacks for the new player
+            // Setup delegate BEFORE playing — reconfigureProcessingGraph
+            // will be called by SFBAudioEngine to insert our EQ node
             newPlayer.delegate = self
 
             // Start playback on the new player at zero volume
@@ -654,8 +805,14 @@ class PlayerManager: NSObject {
             let steps = 50 // Number of volume adjustments
             let stepDuration = duration / Double(steps)
 
+            // Capture volume under lock to avoid data race
+            self.stateLock.lock()
+            let targetVolume = self._volume
+            self.stateLock.unlock()
+
             class CrossfadeState {
                 var currentStep = 0
+                var cancelled = false
             }
             let state = CrossfadeState()
 
@@ -666,7 +823,7 @@ class PlayerManager: NSObject {
                 guard let self = self else { return }
 
                 self.crossfadeTimer = Timer.scheduledTimer(withTimeInterval: stepDuration, repeats: true) { [weak self] timer in
-                    guard let self = self else {
+                    guard let self = self, !state.cancelled else {
                         timer.invalidate()
                         return
                     }
@@ -675,15 +832,21 @@ class PlayerManager: NSObject {
                     let progress = Double(state.currentStep) / Double(steps)
 
                     // Crossfade volumes: old fades out, new fades in
-                    let oldVolume = Float((1.0 - progress)) * self._volume
-                    let newVolume = Float(progress) * self._volume
+                    let oldVolume = Float((1.0 - progress)) * targetVolume
+                    let newVolume = Float(progress) * targetVolume
 
-                    // Apply volumes to the players
+                    // Apply volumes to the players — guard against cleaned-up players
                     do {
-                        try currentPlayer.setVolume(oldVolume)
-                        try newPlayer.setVolume(newVolume)
+                        if self.fadingOutPlayer != nil {
+                            try currentPlayer.setVolume(oldVolume)
+                        }
+                        if self.audioPlayer === newPlayer {
+                            try newPlayer.setVolume(newVolume)
+                        }
                     } catch {
+                        #if DEBUG
                         print("Failed to set crossfade volume: \(error)")
+                        #endif
                     }
 
                     if state.currentStep >= steps {
@@ -691,12 +854,15 @@ class PlayerManager: NSObject {
                         timer.invalidate()
                         self.crossfadeTimer = nil
 
-                        // Ensure final volumes are set
+                        // Ensure final volume on new player
                         do {
-                            try currentPlayer.setVolume(0.0)
-                            try newPlayer.setVolume(self._volume)
+                            if self.audioPlayer === newPlayer {
+                                try newPlayer.setVolume(targetVolume)
+                            }
                         } catch {
+                            #if DEBUG
                             print("Failed to set final crossfade volume: \(error)")
+                            #endif
                         }
 
                         // Cleanup old player safely
@@ -715,7 +881,9 @@ class PlayerManager: NSObject {
             }
 
         } catch {
+            #if DEBUG
             print("ERROR - Failed to start crossfade: \(error)")
+            #endif
             // Clean up the failed new player if it exists
             safeCleanupPlayer(newPlayer)
             // Fall back to normal transition
@@ -763,7 +931,7 @@ class PlayerManager: NSObject {
             return
         }
 
-        let url = URL(fileURLWithPath: nextTrack.filePath)
+        let url = URL(fileURLWithPath: Self.actualFilePath(for: nextTrack))
 
         // Clean up previous next player safely
         safeCleanupPlayer(nextAudioPlayer)
@@ -773,7 +941,8 @@ class PlayerManager: NSObject {
         let nextPlayer = AudioPlayer()
 
         do {
-            // For gapless playback, we pre-load the next track
+            // Set delegate so reconfigureProcessingGraph inserts EQ node
+            nextPlayer.delegate = self
             try nextPlayer.play(url)
             nextPlayer.pause() // Pause immediately after loading
 
@@ -782,7 +951,9 @@ class PlayerManager: NSObject {
 
             nextAudioPlayer = nextPlayer
         } catch {
+            #if DEBUG
             print("Failed to prepare next track: \(error)")
+            #endif
             nextAudioPlayer = nil
         }
     }
@@ -853,7 +1024,9 @@ class PlayerManager: NSObject {
             try preparedNextPlayer.setVolume(_volume)
             try preparedNextPlayer.resume()
         } catch {
+            #if DEBUG
             print("Failed to resume prepared player: \(error)")
+            #endif
             next()
             return
         }
@@ -894,6 +1067,14 @@ class PlayerManager: NSObject {
         DispatchQueue.main.async { [weak self] in
             self?.playbackTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
                 guard let self = self, self.isPlaying else { return }
+
+                // Check CUE end time
+                if let endTime = self.currentTrack?.endTime, self.currentTime >= endTime {
+                    self.playerQueue.async {
+                        self.handleTrackNearingCompletion()
+                    }
+                    return
+                }
 
                 NotificationCenter.default.post(
                     name: Constants.Notifications.playbackTimeChanged,
@@ -938,6 +1119,11 @@ class PlayerManager: NSObject {
         if let duration = UserDefaults.standard.object(forKey: Constants.UserDefaultsKeys.crossfadeDuration) as? TimeInterval {
             _crossfadeDuration = duration
         }
+
+        if let modeRaw = UserDefaults.standard.string(forKey: Constants.UserDefaultsKeys.replayGainMode),
+           let mode = ReplayGainMode(rawValue: modeRaw) {
+            _replayGainMode = mode
+        }
     }
 
     private func observeQueueManager() {
@@ -955,13 +1141,21 @@ class PlayerManager: NSObject {
     }
 
     private func validateCurrentTrack() {
+        // Copy current track under lock, then release before calling QueueManager
+        // to avoid lock-ordering inversion (stateLock -> queueLock vs queueLock -> stateLock)
         stateLock.lock()
-        defer { stateLock.unlock() }
+        let current = _currentTrack
+        stateLock.unlock()
 
-        if let current = _currentTrack,
-           QueueManager.shared.indexOfTrack(current) == nil {
-            // Current track no longer in queue
-            _currentTrack = QueueManager.shared.currentTrack
+        guard let current = current else { return }
+
+        if QueueManager.shared.indexOfTrack(current) == nil {
+            let newTrack = QueueManager.shared.currentTrack
+
+            stateLock.lock()
+            _currentTrack = newTrack
+            stateLock.unlock()
+
             notifyCurrentTrackChanged()
         }
     }
@@ -995,13 +1189,10 @@ class PlayerManager: NSObject {
 extension PlayerManager: AudioPlayer.Delegate {
     func audioPlayer(_ audioPlayer: AudioPlayer, renderingComplete decoder: any PCMDecoding) {
 
-        // Mark play as completed if >80% of track was played
-        if let playId = currentPlayHistoryId, let track = currentTrack {
-            let currentTime = self.currentTime
-            let duration = track.duration
-            if duration > 0 && currentTime / duration > 0.8 {
-                playHistoryDAO.markCompleted(playId: playId)
-            }
+        // Mark play as completed — track finished naturally so it's 100%
+        if let playId = currentPlayHistoryId {
+            playHistoryDAO.markCompleted(playId: playId)
+            currentPlayHistoryId = nil
         }
 
         // Dispatch to playerQueue for thread-safe state management
@@ -1010,8 +1201,40 @@ extension PlayerManager: AudioPlayer.Delegate {
         }
     }
 
+    private func insertEQNode(into player: AudioPlayer) {
+        let engine = player.audioEngine
+        let mixer = engine.mainMixerNode
+
+        // Find the actual source node connected to mainMixerNode input bus 0
+        // This avoids using player.playerNode which may not bridge correctly
+        guard let connectionPoint = engine.inputConnectionPoint(for: mixer, inputBus: 0),
+              let sourceNode = connectionPoint.node else { return }
+        let format = mixer.inputFormat(forBus: 0)
+
+        let eqNode = EQManager.shared.createEQNode(for: engine)
+        engine.attach(eqNode)
+
+        // Rewire: sourceNode (playerNode) → eqNode → mainMixerNode
+        engine.disconnectNodeInput(mixer)
+        engine.connect(sourceNode, to: eqNode, format: format)
+        engine.connect(eqNode, to: mixer, format: format)
+    }
+
+    func audioPlayer(_ audioPlayer: AudioPlayer, reconfigureProcessingGraph engine: AVAudioEngine, with format: AVAudioFormat) -> AVAudioNode {
+        // Create a fresh EQ node for this engine's format change
+        let eqNode = EQManager.shared.createEQNode(for: engine)
+        engine.attach(eqNode)
+
+        // Connect eqNode → mainMixerNode (SFBAudioEngine will connect playerNode → eqNode)
+        engine.connect(eqNode, to: engine.mainMixerNode, format: format)
+
+        return eqNode
+    }
+
     func audioPlayer(_ audioPlayer: AudioPlayer, encounteredError error: Error) {
+        #if DEBUG
         print("Asynchronous playback error: \(error)")
+        #endif
 
         playerQueue.async { [weak self] in
             guard let self = self else { return }
@@ -1023,6 +1246,20 @@ extension PlayerManager: AudioPlayer.Delegate {
 }
 
 // MARK: - Supporting Types
+
+enum ReplayGainMode: String, CaseIterable {
+    case off = "off"
+    case track = "track"
+    case album = "album"
+
+    var displayName: String {
+        switch self {
+        case .off: return "Off"
+        case .track: return "Track"
+        case .album: return "Album"
+        }
+    }
+}
 
 enum PlaybackState: String {
     case playing

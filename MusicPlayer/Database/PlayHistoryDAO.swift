@@ -12,12 +12,10 @@ class PlayHistoryDAO {
         VALUES (?, ?, 0)
         """
 
-        db.execute(sql: sql, parameters: [
+        return db.executeInsert(sql: sql, parameters: [
             trackId,
             Date().timeIntervalSince1970
         ])
-
-        return db.lastInsertRowId()
     }
 
     /// Mark a play event as completed (user finished >80% of track)
@@ -42,7 +40,7 @@ class PlayHistoryDAO {
         """
 
         let results = db.query(sql: sql, parameters: [limit])
-        return results.map { TrackDAO().trackFromRow($0) }
+        return results.compactMap { TrackDAO().trackFromRow($0) }
     }
 
     /// Get most frequently played tracks
@@ -57,7 +55,7 @@ class PlayHistoryDAO {
         """
 
         let results = db.query(sql: sql, parameters: [limit])
-        return results.map { TrackDAO().trackFromRow($0) }
+        return results.compactMap { TrackDAO().trackFromRow($0) }
     }
 
     /// Get total play count for a specific track
@@ -85,7 +83,7 @@ class PlayHistoryDAO {
         }
 
         let results = db.query(sql: sql, parameters: parameters)
-        return results.map { rowToPlayHistory($0) }
+        return results.compactMap { rowToPlayHistory($0) }
     }
 
     /// Delete play history older than a specific date
@@ -102,11 +100,17 @@ class PlayHistoryDAO {
 
     // MARK: - Helper Methods
 
-    private func rowToPlayHistory(_ row: [String: Any]) -> PlayHistoryEntry {
+    private func rowToPlayHistory(_ row: [String: Any]) -> PlayHistoryEntry? {
+        guard let id = row["id"] as? Int64,
+              let trackId = row["track_id"] as? Int64,
+              let playedAt = row["played_at"] as? Double else {
+            return nil
+        }
+
         return PlayHistoryEntry(
-            id: row["id"] as! Int64,
-            trackId: row["track_id"] as! Int64,
-            playedAt: Date(timeIntervalSince1970: row["played_at"] as! Double),
+            id: id,
+            trackId: trackId,
+            playedAt: Date(timeIntervalSince1970: playedAt),
             completed: (row["completed"] as? Int64 ?? 0) == 1
         )
     }

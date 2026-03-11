@@ -10,11 +10,11 @@ struct Constants {
     static let lyricsCacheDirectory = "LyricsCache"
     static let maxCacheSizeMB = 500
 
-    // API Keys (users should replace with their own)
-    static let lastFMAPIKey = "3f01391362f7079266e1174b52de5b51"
+    // API Keys — loaded from Secrets.swift (not committed to git)
+    static let lastFMAPIKey = Secrets.lastFMAPIKey
     static let musicBrainzAppName = "OrangeMusicPlayer"
     static let musicBrainzVersion = "1.0"
-    static let musicBrainzContact = "cristianv.paraschiv@gmail.com"
+    static let musicBrainzContact = Secrets.musicBrainzContact
 
     // UI
     static let defaultWindowWidth: CGFloat = 1200
@@ -37,6 +37,14 @@ struct Constants {
         static let shuffleEnabled = "shuffleEnabled"
         static let repeatMode = "repeatMode"
         static let volume = "volume"
+        static let queueTrackIDs = "queueTrackIDs"
+        static let queueCurrentIndex = "queueCurrentIndex"
+        static let eqEnabled = "eqEnabled"
+        static let eqGains = "eqGains"
+        static let eqSelectedPresetId = "eqSelectedPresetId"
+        static let eqCustomPresets = "eqCustomPresets"
+        static let replayGainMode = "replayGainMode"
+        static let lastFMScrobblingEnabled = "lastFMScrobblingEnabled"
     }
 
     // Notifications
@@ -55,6 +63,9 @@ struct Constants {
         static let playlistContentChanged = Notification.Name("playlistContentChanged")
         static let artworkDidLoad = Notification.Name("artworkDidLoad")
         static let lyricsDidLoad = Notification.Name("lyricsDidLoad")
+        static let trackMetadataChanged = Notification.Name("trackMetadataChanged")
+        static let navigateToArtist = Notification.Name("navigateToArtist")
+        static let navigateToAlbum = Notification.Name("navigateToAlbum")
     }
 }
 
@@ -69,7 +80,7 @@ enum Icons {
     static let speakerWave3Fill = "speaker.wave.3.fill"
     
     // Playback Controls
-    static let star = "star"
+    static let star = "heart"
     static let playFill = "play.fill"
     static let pauseFill = "pause.fill"
     static let playPauseFill = "playpause.fill"
@@ -124,7 +135,7 @@ enum Icons {
     static let calendarCircleFill = "calendar.circle.fill"
     
     // Smart Playlist Icons
-    static let starFill = "star.fill"
+    static let starFill = "heart.fill"
     static let clockFill = "clock.fill"
     
     // Sort Icons

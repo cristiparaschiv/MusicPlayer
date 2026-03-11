@@ -8,7 +8,7 @@ class ArtworkManager {
     // MARK: - Properties
 
     private let artworkQueue = DispatchQueue(label: "com.orangemusicplayer.artwork", qos: .utility)
-    private var memoryCache: [String: NSImage] = [:]
+    private let memoryCache = NSCache<NSString, NSImage>()
     private let cacheLock = NSLock()
 
     private let musicBrainzBaseURL = "https://musicbrainz.org/ws/2"
@@ -17,11 +17,15 @@ class ArtworkManager {
 
     // Rate limiting for MusicBrainz (1 request per second as per their guidelines)
     private var lastMusicBrainzRequest: Date?
+    private let rateLimitLock = NSLock()
     private let musicBrainzRateLimit: TimeInterval = 1.0
 
     // MARK: - Initialization
 
-    private init() {}
+    private init() {
+        memoryCache.countLimit = 100
+        memoryCache.totalCostLimit = 50 * 1024 * 1024 // 50 MB
+    }
 
     // MARK: - Public API - Album Artwork
 
@@ -40,21 +44,18 @@ class ArtworkManager {
 
             // Check memory cache
             if let cachedImage = self.getCachedImage(for: cacheKey) {
-                print("Album artwork found in memory cache for: \(albumTitle)")
                 self.callCompletion(completion, with: .success(cachedImage))
                 return
             }
 
             // Check disk cache
             if let diskCachedImage = self.loadImageFromDisk(cacheKey: cacheKey) {
-                print("Album artwork found in disk cache for: \(albumTitle)")
                 self.cacheImage(diskCachedImage, for: cacheKey)
                 self.callCompletion(completion, with: .success(diskCachedImage))
                 return
             }
 
             // Fetch from MusicBrainz
-            print("Fetching album artwork from MusicBrainz for: \(albumTitle) by \(artistName ?? "Unknown")")
             self.fetchAlbumArtworkFromMusicBrainz(albumTitle: albumTitle, artistName: artistName) { result in
                 switch result {
                 case .success(let image):
@@ -94,7 +95,6 @@ class ArtworkManager {
                 let imageData = firstPicture.imageData
 
                 if let image = NSImage(data: imageData) {
-                    print("Extracted artwork from track metadata: \(track.title)")
 
                     // Resize and cache
                     if let resizedImage = self.resizeImage(image, to: self.smallImageSize) {
@@ -134,21 +134,18 @@ class ArtworkManager {
 
             // Check memory cache
             if let cachedImage = self.getCachedImage(for: cacheKey) {
-                print("Artist artwork found in memory cache for: \(artistName)")
                 self.callCompletion(completion, with: .success(cachedImage))
                 return
             }
 
             // Check disk cache
             if let diskCachedImage = self.loadImageFromDisk(cacheKey: cacheKey) {
-                print("Artist artwork found in disk cache for: \(artistName)")
                 self.cacheImage(diskCachedImage, for: cacheKey)
                 self.callCompletion(completion, with: .success(diskCachedImage))
                 return
             }
 
             // Fetch from MusicBrainz
-            print("Fetching artist artwork from MusicBrainz for: \(artistName)")
             self.fetchArtistArtworkFromMusicBrainz(artistName: artistName) { result in
                 switch result {
                 case .success(let image):
@@ -172,10 +169,7 @@ class ArtworkManager {
 
     /// Clear memory cache
     func clearMemoryCache() {
-        cacheLock.lock()
-        memoryCache.removeAll()
-        cacheLock.unlock()
-        print("Artwork memory cache cleared")
+        memoryCache.removeAllObjects()
     }
 
     /// Clear disk cache
@@ -183,7 +177,6 @@ class ArtworkManager {
         let cacheDir = getCacheDirectory()
         try? FileManager.default.removeItem(at: cacheDir)
         try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
-        print("Artwork disk cache cleared")
     }
 
     /// Clear all caches
@@ -228,19 +221,20 @@ class ArtworkManager {
             return
         }
 
-        // Rate limiting
-        waitForRateLimit()
+        // Rate limiting (non-blocking)
+        scheduleAfterRateLimit(on: artworkQueue) { [weak self] in
+            guard let self = self else { return }
 
-        print("Searching MusicBrainz: \(searchURL.absoluteString)")
+            // Create request with User-Agent (required by MusicBrainz)
+            var request = URLRequest(url: searchURL)
+            request.setValue("\(Constants.musicBrainzAppName)/\(Constants.musicBrainzVersion) ( \(Constants.musicBrainzContact) )", forHTTPHeaderField: "User-Agent")
 
-        // Create request with User-Agent (required by MusicBrainz)
-        var request = URLRequest(url: searchURL)
-        request.setValue("\(Constants.musicBrainzAppName)/\(Constants.musicBrainzVersion) ( \(Constants.musicBrainzContact) )", forHTTPHeaderField: "User-Agent")
-
-        // Perform search request
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            // Perform search request
+            let task = URLSession.shared.dataTask(with: request) { data, response, error in
             if let error = error {
+                #if DEBUG
                 print("MusicBrainz search error: \(error)")
+                #endif
                 completion(.failure(.networkError(error)))
                 return
             }
@@ -257,18 +251,20 @@ class ArtworkManager {
                    let firstRelease = releases.first,
                    let releaseId = firstRelease["id"] as? String {
 
-                    print("Found release ID: \(releaseId)")
                     completion(.success(releaseId))
                 } else {
                     completion(.failure(.noResults))
                 }
             } catch {
+                #if DEBUG
                 print("JSON parsing error: \(error)")
+                #endif
                 completion(.failure(.parsingError))
             }
         }
 
         task.resume()
+        } // scheduleAfterRateLimit
     }
 
     private func fetchCoverArt(releaseId: String, completion: @escaping (Result<NSImage, ArtworkError>) -> Void) {
@@ -277,11 +273,12 @@ class ArtworkManager {
             return
         }
 
-        print("Fetching cover art: \(artworkURL.absoluteString)")
 
         let task = URLSession.shared.dataTask(with: artworkURL) { data, response, error in
             if let error = error {
+                #if DEBUG
                 print("Cover art download error: \(error)")
+                #endif
                 completion(.failure(.networkError(error)))
                 return
             }
@@ -291,7 +288,6 @@ class ArtworkManager {
                 return
             }
 
-            print("Successfully downloaded cover art")
             completion(.success(image))
         }
 
@@ -306,45 +302,51 @@ class ArtworkManager {
             return
         }
 
-        // Rate limiting
-        waitForRateLimit()
-
-        var request = URLRequest(url: searchURL)
-        request.setValue("\(Constants.musicBrainzAppName)/\(Constants.musicBrainzVersion) ( \(Constants.musicBrainzContact) )", forHTTPHeaderField: "User-Agent")
-
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+        // Rate limiting (non-blocking)
+        scheduleAfterRateLimit(on: artworkQueue) { [weak self] in
             guard let self = self else { return }
 
-            if let error = error {
-                print("MusicBrainz artist search error: \(error)")
-                self.callCompletion(completion, with: .failure(.networkError(error)))
-                return
-            }
+            var request = URLRequest(url: searchURL)
+            request.setValue("\(Constants.musicBrainzAppName)/\(Constants.musicBrainzVersion) ( \(Constants.musicBrainzContact) )", forHTTPHeaderField: "User-Agent")
 
-            guard let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let artists = json["artists"] as? [[String: Any]],
-                  let firstArtist = artists.first,
-                  let mbid = firstArtist["id"] as? String else {
-                print("No artist found on MusicBrainz for: \(artistName)")
-                self.callCompletion(completion, with: .failure(.noResults))
-                return
-            }
+            URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+                guard let self = self else { return }
 
-            print("Found artist MBID: \(mbid)")
-
-            // Step 2: Try to get artist image from Fanart.tv using MBID
-            self.fetchArtistImageFromFanartTV(mbid: mbid) { result in
-                switch result {
-                case .success(let image):
-                    self.callCompletion(completion, with: .success(image))
-                case .failure:
-                    // Step 3: Fallback to TheAudioDB
-                    print("Fanart.tv failed, trying TheAudioDB...")
-                    self.fetchArtistImageFromTheAudioDB(artist: artistName, completion: completion)
+                if let error = error {
+                    #if DEBUG
+                    print("MusicBrainz artist search error: \(error)")
+                    #endif
+                    self.callCompletion(completion, with: .failure(.networkError(error)))
+                    return
                 }
-            }
-        }.resume()
+
+                guard let data = data,
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let artists = json["artists"] as? [[String: Any]],
+                      let firstArtist = artists.first,
+                      let mbid = firstArtist["id"] as? String else {
+                    #if DEBUG
+                    print("No artist found on MusicBrainz for: \(artistName)")
+                    #endif
+                    self.callCompletion(completion, with: .failure(.noResults))
+                    return
+                }
+
+                // Step 2: Try to get artist image from Fanart.tv using MBID
+                self.fetchArtistImageFromFanartTV(mbid: mbid) { result in
+                    switch result {
+                    case .success(let image):
+                        self.callCompletion(completion, with: .success(image))
+                    case .failure:
+                        // Step 3: Fallback to TheAudioDB
+                        #if DEBUG
+                        print("Fanart.tv failed, trying TheAudioDB...")
+                        #endif
+                        self.fetchArtistImageFromTheAudioDB(artist: artistName, completion: completion)
+                    }
+                }
+            }.resume()
+        } // scheduleAfterRateLimit
     }
     
     private func fetchArtistImageFromFanartTV(mbid: String, completion: @escaping (Result<NSImage, ArtworkError>) -> Void) {
@@ -364,14 +366,18 @@ class ArtworkManager {
             guard let self = self else { return }
 
             if let error = error {
+                #if DEBUG
                 print("Fanart.tv error: \(error)")
+                #endif
                 self.callCompletion(completion, with: .failure(.networkError(error)))
                 return
             }
 
             guard let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                #if DEBUG
                 print("Failed to parse Fanart.tv response")
+                #endif
                 self.callCompletion(completion, with: .failure(.parsingError))
                 return
             }
@@ -394,7 +400,9 @@ class ArtworkManager {
                 return
             }
 
+            #if DEBUG
             print("No artist images found on Fanart.tv")
+            #endif
             self.callCompletion(completion, with: .failure(.noResults))
         }.resume()
     }
@@ -413,7 +421,9 @@ class ArtworkManager {
             guard let self = self else { return }
 
             if let error = error {
+                #if DEBUG
                 print("TheAudioDB error: \(error)")
+                #endif
                 self.callCompletion(completion, with: .failure(.networkError(error)))
                 return
             }
@@ -422,7 +432,9 @@ class ArtworkManager {
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let artists = json["artists"] as? [[String: Any]],
                   let firstArtist = artists.first else {
+                #if DEBUG
                 print("No artist found on TheAudioDB for: \(artist)")
+                #endif
                 self.callCompletion(completion, with: .failure(.noResults))
                 return
             }
@@ -439,35 +451,41 @@ class ArtworkManager {
                 }
             }
 
+            #if DEBUG
             print("No artist images found on TheAudioDB")
+            #endif
             self.callCompletion(completion, with: .failure(.noResults))
         }.resume()
     }
     
     private func downloadAndProcessImage(from url: URL, completion: @escaping (Result<NSImage, ArtworkError>) -> Void) {
-        print("Downloading image from: \(url.absoluteString)")
 
         URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
             guard let self = self else { return }
 
             if let error = error {
+                #if DEBUG
                 print("Image download error: \(error)")
+                #endif
                 self.callCompletion(completion, with: .failure(.networkError(error)))
                 return
             }
 
             guard let data = data, let image = NSImage(data: data) else {
+                #if DEBUG
                 print("Failed to create image from data")
+                #endif
                 self.callCompletion(completion, with: .failure(.noData))
                 return
             }
 
             // Resize the image
             if let resizedImage = self.resizeImage(image, to: self.smallImageSize) {
-                print("Successfully downloaded and resized image")
                 self.callCompletion(completion, with: .success(resizedImage))
             } else {
+                #if DEBUG
                 print("Failed to resize image")
+                #endif
                 self.callCompletion(completion, with: .failure(.processingError))
             }
         }.resume()
@@ -517,15 +535,12 @@ class ArtworkManager {
     }
 
     private func getCachedImage(for key: String) -> NSImage? {
-        cacheLock.lock()
-        defer { cacheLock.unlock() }
-        return memoryCache[key]
+        return memoryCache.object(forKey: key as NSString)
     }
 
     private func cacheImage(_ image: NSImage, for key: String) {
-        cacheLock.lock()
-        memoryCache[key] = image
-        cacheLock.unlock()
+        let cost = Int(image.size.width * image.size.height * 4)
+        memoryCache.setObject(image, forKey: key as NSString, cost: cost)
     }
 
     private func getCacheDirectory() -> URL {
@@ -556,29 +571,40 @@ class ArtworkManager {
         guard let tiffData = image.tiffRepresentation,
               let bitmapImage = NSBitmapImageRep(data: tiffData),
               let pngData = bitmapImage.representation(using: .png, properties: [:]) else {
+            #if DEBUG
             print("Failed to convert image to PNG")
+            #endif
             return
         }
 
         do {
             try pngData.write(to: fileURL)
-            print("Saved artwork to disk: \(fileURL.lastPathComponent)")
         } catch {
+            #if DEBUG
             print("Failed to save artwork to disk: \(error)")
+            #endif
         }
     }
 
     // MARK: - Helper Methods
 
-    private func waitForRateLimit() {
+    /// Schedule work after MusicBrainz rate limit delay (non-blocking)
+    private func scheduleAfterRateLimit(on queue: DispatchQueue, work: @escaping () -> Void) {
+        rateLimitLock.lock()
+        let delay: TimeInterval
         if let lastRequest = lastMusicBrainzRequest {
-            let timeSinceLastRequest = Date().timeIntervalSince(lastRequest)
-            if timeSinceLastRequest < musicBrainzRateLimit {
-                let waitTime = musicBrainzRateLimit - timeSinceLastRequest
-                Thread.sleep(forTimeInterval: waitTime)
-            }
+            let elapsed = Date().timeIntervalSince(lastRequest)
+            delay = max(0, musicBrainzRateLimit - elapsed)
+        } else {
+            delay = 0
         }
-        lastMusicBrainzRequest = Date()
+        lastMusicBrainzRequest = Date().addingTimeInterval(delay)
+        rateLimitLock.unlock()
+        if delay > 0 {
+            queue.asyncAfter(deadline: .now() + delay, execute: work)
+        } else {
+            work()
+        }
     }
 
     private func callCompletion<T>(_ completion: @escaping (Result<T, ArtworkError>) -> Void, with result: Result<T, ArtworkError>) {

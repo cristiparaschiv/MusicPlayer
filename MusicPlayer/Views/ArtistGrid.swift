@@ -24,6 +24,11 @@ struct ArtistGrid: View {
                 loadAllArtists()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: Constants.Notifications.libraryDidUpdate)) { _ in
+            if artists == nil {
+                loadAllArtists()
+            }
+        }
     }
 
     private var displayArtists: [Artist] {
@@ -46,19 +51,18 @@ struct ArtistGridItem: View {
     private let artworkManager = ArtworkManager.shared
 
     var body: some View {
-        NavigationLink(destination: ArtistDetailView(artist: artist)) {
+        NavigationLink(value: artist) {
             VStack(alignment: .leading, spacing: 8) {
                 // Album artwork
                 ZStack(alignment: .bottomTrailing) {
-                    Group {
-                        if let artwork = artwork {
-                            Image(nsImage: artwork)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                        } else {
-                            ZStack {
-                                Color.secondary.opacity(0.2)
-
+                    Color.secondary.opacity(0.2)
+                        .aspectRatio(1, contentMode: .fit)
+                        .overlay {
+                            if let artwork = artwork {
+                                Image(nsImage: artwork)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                            } else {
                                 Image(systemName: Icons.opticalDiscFill)
                                     .resizable()
                                     .aspectRatio(contentMode: .fit)
@@ -66,10 +70,9 @@ struct ArtistGridItem: View {
                                     .padding(30)
                             }
                         }
-                    }
-                    .frame(width: 180, height: 180)
-                    .cornerRadius(8)
-                    .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
+                        .clipped()
+                        .cornerRadius(8)
+                        .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
 
                     // Play button overlay on hover
                     if isHovered {
@@ -96,10 +99,10 @@ struct ArtistGridItem: View {
                 // Artist name
                 //if let artist = artist.name {
                     Text(artist.name)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
                         .lineLimit(1)
-                        .frame(width: 180, alignment: .leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 //}
 
                 //}

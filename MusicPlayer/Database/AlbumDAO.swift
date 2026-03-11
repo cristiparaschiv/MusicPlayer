@@ -10,7 +10,7 @@ class AlbumDAO {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
 
-        db.execute(sql: sql, parameters: [
+        return db.executeInsert(sql: sql, parameters: [
             album.title,
             album.titleSort,
             album.artistId as Any,
@@ -23,30 +23,28 @@ class AlbumDAO {
             album.dateAdded.timeIntervalSince1970,
             album.artworkPath as Any
         ])
-
-        return db.lastInsertRowId()
     }
 
-    func getAll(limit: Int? = nil, offset: Int = 0, orderBy: String = "title_sort") -> [Album] {
-        var sql = "SELECT * FROM albums ORDER BY \(orderBy)"
+    func getAll(limit: Int? = nil, offset: Int = 0) -> [Album] {
+        var sql = "SELECT * FROM albums ORDER BY title_sort"
         if let limit = limit {
             sql += " LIMIT \(limit) OFFSET \(offset)"
         }
 
         let results = db.query(sql: sql)
-        return results.map { rowToAlbum($0) }
+        return results.compactMap { rowToAlbum($0) }
     }
 
     func getById(id: Int64) -> Album? {
         let sql = "SELECT * FROM albums WHERE id = ?"
         let results = db.query(sql: sql, parameters: [id])
-        return results.first.map { rowToAlbum($0) }
+        return results.first.flatMap { rowToAlbum($0) }
     }
 
     func getByArtistId(artistId: Int64, orderBy: String = "year DESC, title_sort") -> [Album] {
         let sql = "SELECT * FROM albums WHERE artist_id = ? ORDER BY \(orderBy)"
         let results = db.query(sql: sql, parameters: [artistId])
-        return results.map { rowToAlbum($0) }
+        return results.compactMap { rowToAlbum($0) }
     }
 
     func search(query: String, limit: Int = 100) -> [Album] {
@@ -58,18 +56,14 @@ class AlbumDAO {
         """
 
         let searchTerm = "%\(query)%"
-        print("[AlbumDAO] Searching with term: '\(searchTerm)'")
         let results = db.query(sql: sql, parameters: [searchTerm, searchTerm, limit])
-        print("[AlbumDAO] Query returned \(results.count) rows")
-        let albums = results.map { rowToAlbum($0) }
-        print("[AlbumDAO] Mapped to \(albums.count) albums")
-        return albums
+        return results.compactMap { rowToAlbum($0) }
     }
 
     func getRecentlyAdded(limit: Int = 20) -> [Album] {
         let sql = "SELECT * FROM albums ORDER BY date_added DESC LIMIT ?"
         let results = db.query(sql: sql, parameters: [limit])
-        return results.map { rowToAlbum($0) }
+        return results.compactMap { rowToAlbum($0) }
     }
 
     func getByYear(year: Int, limit: Int? = nil, offset: Int = 0) -> [Album] {
@@ -79,7 +73,7 @@ class AlbumDAO {
         }
 
         let results = db.query(sql: sql, parameters: [year])
-        return results.map { rowToAlbum($0) }
+        return results.compactMap { rowToAlbum($0) }
     }
 
     func update(album: Album) {
@@ -135,10 +129,15 @@ class AlbumDAO {
         return insert(album: newAlbum)
     }
 
-    private func rowToAlbum(_ row: [String: Any]) -> Album {
+    private func rowToAlbum(_ row: [String: Any]) -> Album? {
+        guard let id = row["id"] as? Int64,
+              let title = row["title"] as? String,
+              let dateAdded = row["date_added"] as? Double else {
+            return nil
+        }
         return Album(
-            id: row["id"] as! Int64,
-            title: row["title"] as! String,
+            id: id,
+            title: title,
             titleSort: row["title_sort"] as? String,
             artistId: row["artist_id"] as? Int64,
             artistName: row["artist_name"] as? String,
@@ -147,7 +146,7 @@ class AlbumDAO {
             genreName: row["genre_name"] as? String,
             trackCount: Int(row["track_count"] as? Int64 ?? 0),
             totalDuration: row["total_duration"] as? Double ?? 0,
-            dateAdded: Date(timeIntervalSince1970: row["date_added"] as! Double),
+            dateAdded: Date(timeIntervalSince1970: dateAdded),
             artworkPath: row["artwork_path"] as? String
         )
     }

@@ -1,16 +1,15 @@
 import SwiftUI
-import AppKit
 
 struct PlaylistView: View {
-    let playlist: Playlist?  // nil for Favorites
+    let playlist: Playlist?
     let isFavorites: Bool
 
     @State private var tracks: [Track] = []
-    @State private var sortedTracks: [Track] = []
-    @State private var selection = Set<Track.ID>()
-    @State private var sortOrder: [KeyPathComparator<Track>] = []
     @State private var showingDeleteAlert = false
     @State private var showingClearAlert = false
+    @State private var showingSmartPlaylistEditor = false
+    @State private var trackToEdit: Track?
+    @State private var importMessage: String?
 
     @Environment(\.dismiss) private var dismiss
 
@@ -39,7 +38,6 @@ struct PlaylistView: View {
         VStack(alignment: .leading, spacing: 0) {
             // Header
             HStack(alignment: .center, spacing: 16) {
-                // Playlist icon/artwork placeholder
                 ZStack {
                     if isFavorites {
                         Color.pink.opacity(0.3)
@@ -67,7 +65,7 @@ struct PlaylistView: View {
                             .foregroundColor(.secondary)
 
                         if !tracks.isEmpty {
-                            Text("•")
+                            Text("\u{2022}")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
 
@@ -96,6 +94,28 @@ struct PlaylistView: View {
                             .buttonStyle(.bordered)
                         }
 
+                        if !isFavorites && playlist?.isSmartPlaylist == true {
+                            Button(action: { showingSmartPlaylistEditor = true }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "slider.horizontal.3")
+                                    Text("Edit Rules")
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                        }
+
+                        if !isFavorites && !tracks.isEmpty {
+                            Button(action: {
+                                PlaylistManager.shared.exportPlaylist(name: displayName, tracks: tracks)
+                            }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "square.and.arrow.up")
+                                    Text("Export")
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                        }
+
                         if !isFavorites {
                             Button(action: { showingDeleteAlert = true }) {
                                 HStack(spacing: 4) {
@@ -116,7 +136,7 @@ struct PlaylistView: View {
 
             Divider()
 
-            // Table
+            // Content
             if tracks.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: isFavorites ? Icons.starFill : Icons.musicNoteList)
@@ -127,7 +147,7 @@ struct PlaylistView: View {
                         .font(.headline)
                         .foregroundColor(.secondary)
 
-                    Text(isFavorites ? "Mark songs as favorites to see them here" : "Add songs to this playlist from the Songs view or album views")
+                    Text(isFavorites ? "Mark songs as favorites to see them here" : (playlist?.isSmartPlaylist == true ? "No songs match the current smart playlist criteria" : "Add songs to this playlist from the Songs view or album views"))
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -135,29 +155,30 @@ struct PlaylistView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                Table(sortedTracks, selection: $selection, sortOrder: $sortOrder) {
-                    trackNumberColumn
-                    titleColumn
-                    artistColumn
-                    albumColumn
-                    yearColumn
-                    durationColumn
-                }
-                .contextMenu(forSelectionType: Track.ID.self) { items in
-                    if items.isEmpty {
-                        // No selection
-                    } else if items.count == 1 {
-                        singleTrackContextMenu(trackId: items.first!)
-                    } else {
-                        multipleTracksContextMenu(trackIds: items)
+                TrackTableView(
+                    tracks: tracks,
+                    config: TrackTableConfig(
+                        showRemoveFromPlaylist: true,
+                        removeFromPlaylistLabel: "Remove from \(displayName)",
+                        onRemoveFromPlaylist: { trackIDs in
+                            for id in trackIDs {
+                                removeFromPlaylist(trackId: id)
+                            }
+                        },
+                        onEditTrack: { trackToEdit = $0 },
+                        allowReorder: !isFavorites && playlist?.isSmartPlaylist != true,
+                        onReorder: { newOrder in
+                            guard let playlistId = playlist?.id else { return }
+                            playlistDAO.reorderTracks(playlistId: playlistId, trackIds: newOrder)
+                        }
+                    ),
+                    onPlayTrack: { track, allTracks in
+                        if let index = allTracks.firstIndex(where: { $0.id == track.id }) {
+                            QueueManager.shared.setQueue(allTracks, startIndex: index)
+                            PlayerManager.shared.play(track: track)
+                        }
                     }
-                }
-                .onChange(of: sortOrder) { _, newOrder in
-                    applySorting(newOrder)
-                }
-                .onTableDoubleClick {
-                    handleDoubleClick()
-                }
+                )
             }
         }
         .alert("Delete Playlist", isPresented: $showingDeleteAlert) {
@@ -175,6 +196,16 @@ struct PlaylistView: View {
             }
         } message: {
             Text("Are you sure you want to remove all songs from \"\(displayName)\"?")
+        }
+        .sheet(item: $trackToEdit) { track in
+            TrackEditorView(track: track)
+        }
+        .sheet(isPresented: $showingSmartPlaylistEditor) {
+            if let playlist = playlist {
+                SmartPlaylistEditorView(isPresented: $showingSmartPlaylistEditor, existingPlaylist: playlist) { newName, newCriteria in
+                    saveSmartPlaylist(name: newName, criteria: newCriteria)
+                }
+            }
         }
         .onAppear {
             loadTracks()
@@ -201,62 +232,30 @@ struct PlaylistView: View {
         if isFavorites {
             tracks = trackDAO.getFavorites()
         } else if let playlist = playlist {
-            tracks = playlistDAO.getTracksForPlaylist(playlistId: playlist.id)
-        }
-        applySorting(sortOrder)
-    }
-
-    private func applySorting(_ order: [KeyPathComparator<Track>]) {
-        sortedTracks = tracks.sorted { track1, track2 in
-            let artist1 = track1.displayArtist.lowercased()
-            let artist2 = track2.displayArtist.lowercased()
-            if artist1 != artist2 {
-                return artist1 < artist2
+            if playlist.isSmartPlaylist,
+               let json = playlist.smartCriteria,
+               let data = json.data(using: .utf8),
+               let criteria = try? JSONDecoder().decode(SmartPlaylistCriteria.self, from: data) {
+                tracks = playlistDAO.getTracksForSmartPlaylist(criteria: criteria)
+            } else {
+                tracks = playlistDAO.getTracksForPlaylist(playlistId: playlist.id)
             }
-
-            let year1 = track1.year ?? Int.max
-            let year2 = track2.year ?? Int.max
-            if year1 != year2 {
-                return year1 < year2
-            }
-
-            let album1 = track1.displayAlbum.lowercased()
-            let album2 = track2.displayAlbum.lowercased()
-            if album1 != album2 {
-                return album1 < album2
-            }
-
-            let disc1 = track1.discNumber ?? 0
-            let disc2 = track2.discNumber ?? 0
-            if disc1 != disc2 {
-                return disc1 < disc2
-            }
-
-            let trackNum1 = track1.trackNumber ?? Int.max
-            let trackNum2 = track2.trackNumber ?? Int.max
-            return trackNum1 < trackNum2
-        }
-
-        if !order.isEmpty {
-            sortedTracks.sort(using: order)
         }
     }
 
     private func playAll() {
-        guard !sortedTracks.isEmpty else { return }
-        QueueManager.shared.setQueue(sortedTracks, startIndex: 0)
-        PlayerManager.shared.play(track: sortedTracks[0])
+        guard !tracks.isEmpty else { return }
+        QueueManager.shared.setQueue(tracks, startIndex: 0)
+        PlayerManager.shared.play(track: tracks[0])
     }
 
     private func clearPlaylist() {
         if isFavorites {
-            // Clear all favorites
             for track in tracks {
                 trackDAO.updateFavorite(trackId: track.id, isFavorite: false)
             }
             NotificationCenter.default.post(name: Constants.Notifications.trackFavoriteChanged, object: nil)
         } else if let playlist = playlist {
-            // Remove all tracks from playlist
             for track in tracks {
                 playlistDAO.removeTrack(playlistId: playlist.id, trackId: track.id)
             }
@@ -271,49 +270,32 @@ struct PlaylistView: View {
 
     private func deletePlaylist() {
         guard let playlist = playlist else { return }
-
         playlistDAO.delete(playlistId: playlist.id)
         NotificationCenter.default.post(name: Constants.Notifications.playlistsChanged, object: nil)
-
-        // Navigate back to home
         dismiss()
     }
 
-    private func handleDoubleClick() {
-        guard let selectedId = selection.first,
-              let track = sortedTracks.first(where: { $0.id == selectedId }) else {
-            return
-        }
+    private func saveSmartPlaylist(name: String, criteria: SmartPlaylistCriteria) {
+        guard var updatedPlaylist = playlist else { return }
+        let jsonData = try? JSONEncoder().encode(criteria)
+        let jsonString = jsonData.flatMap { String(data: $0, encoding: .utf8) }
+        let trackCount = playlistDAO.getSmartPlaylistTrackCount(criteria: criteria)
 
-        playTrack(track)
+        let newPlaylist = Playlist(
+            id: updatedPlaylist.id,
+            name: name,
+            dateCreated: updatedPlaylist.dateCreated,
+            dateModified: Date(),
+            isSmartPlaylist: true,
+            smartCriteria: jsonString,
+            trackCount: trackCount
+        )
+        playlistDAO.update(playlist: newPlaylist)
+        NotificationCenter.default.post(name: Constants.Notifications.playlistsChanged, object: nil)
+        loadTracks()
     }
 
-    private func playTrack(_ track: Track) {
-        // Get the index of the selected track in sorted list
-        if let index = sortedTracks.firstIndex(where: { $0.id == track.id }) {
-            // Set queue with all tracks starting from the selected track
-            QueueManager.shared.setQueue(sortedTracks, startIndex: index)
-            PlayerManager.shared.play(track: track)
-        }
-    }
-
-    private func playTracks(_ tracks: [Track]) {
-        guard !tracks.isEmpty else { return }
-
-        let orderedTracks = sortedTracks.filter { track in
-            tracks.contains(where: { $0.id == track.id })
-        }
-
-        QueueManager.shared.setQueue(orderedTracks, startIndex: 0)
-        PlayerManager.shared.play(track: orderedTracks[0])
-    }
-
-    private func showInFinder(track: Track) {
-        let url = URL(fileURLWithPath: track.filePath)
-        NSWorkspace.shared.activateFileViewerSelecting([url])
-    }
-
-    private func removeFromPlaylist(trackId: Track.ID) {
+    private func removeFromPlaylist(trackId: Int64) {
         if isFavorites {
             trackDAO.updateFavorite(trackId: trackId, isFavorite: false)
             NotificationCenter.default.post(name: Constants.Notifications.trackFavoriteChanged, object: nil)
@@ -327,131 +309,4 @@ struct PlaylistView: View {
         }
         loadTracks()
     }
-
-    // MARK: - Context Menus
-
-    @ViewBuilder
-    private func singleTrackContextMenu(trackId: Track.ID) -> some View {
-        if let track = sortedTracks.first(where: { $0.id == trackId }) {
-            Button("Play Now") {
-                playTrack(track)
-            }
-
-            Button("Add to Queue") {
-                QueueManager.shared.addToQueue([track])
-            }
-
-            Button("Play Next") {
-                QueueManager.shared.insertNext([track])
-            }
-
-            Divider()
-
-            Button("Remove from \(displayName)") {
-                removeFromPlaylist(trackId: trackId)
-            }
-
-            Divider()
-
-            Button(track.isFavorite ? "Remove from Favorites" : "Add to Favorites") {
-                PlayerManager.shared.toggleFavorite(track: track)
-            }
-
-            Divider()
-
-            AddToPlaylistMenu(tracks: [track])
-
-            Divider()
-
-            Button("Show in Finder") {
-                showInFinder(track: track)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func multipleTracksContextMenu(trackIds: Set<Track.ID>) -> some View {
-        let selectedTracks = sortedTracks.filter { trackIds.contains($0.id) }
-
-        Button("Play Now") {
-            playTracks(selectedTracks)
-        }
-
-        Button("Add to Queue") {
-            QueueManager.shared.addToQueue(selectedTracks)
-        }
-
-        Button("Play Next") {
-            QueueManager.shared.insertNext(selectedTracks)
-        }
-
-        Divider()
-
-        Button("Remove from \(displayName)") {
-            for trackId in trackIds {
-                removeFromPlaylist(trackId: trackId)
-            }
-        }
-
-        Divider()
-
-        AddToPlaylistMenu(tracks: selectedTracks)
-    }
-
-    // MARK: - Table Columns
-
-    private var trackNumberColumn: some TableColumnContent<Track, Never> {
-        TableColumn("#") { track in
-            Text(track.trackNumber.map { String($0) } ?? "")
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-        }
-        .width(min: 40, ideal: 50, max: 60)
-    }
-
-    private var titleColumn: some TableColumnContent<Track, KeyPathComparator<Track>> {
-        TableColumn("Title", value: \.title) { track in
-            Text(track.title)
-        }
-        .width(min: 150, ideal: 250)
-    }
-
-    private var artistColumn: some TableColumnContent<Track, KeyPathComparator<Track>> {
-        TableColumn("Artist", value: \.displayArtist) { track in
-            Text(track.displayArtist)
-                .foregroundStyle(.secondary)
-        }
-        .width(min: 120, ideal: 180)
-    }
-
-    private var albumColumn: some TableColumnContent<Track, KeyPathComparator<Track>> {
-        TableColumn("Album", value: \.displayAlbum) { track in
-            Text(track.displayAlbum)
-                .foregroundStyle(.secondary)
-        }
-        .width(min: 120, ideal: 200)
-    }
-
-    private var yearColumn: some TableColumnContent<Track, Never> {
-        TableColumn("Year") { track in
-            if let year = track.year {
-                Text(String(year))
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            } else {
-                Text("")
-            }
-        }
-        .width(min: 50, ideal: 60, max: 70)
-    }
-
-    private var durationColumn: some TableColumnContent<Track, KeyPathComparator<Track>> {
-        TableColumn("Duration", value: \.duration) { track in
-            Text(track.formattedDuration)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-        }
-        .width(min: 60, ideal: 80, max: 90)
-    }
 }
-

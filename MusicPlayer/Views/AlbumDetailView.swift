@@ -4,24 +4,26 @@ struct AlbumDetailView: View {
     let album: Album
     @State private var artwork: NSImage?
     @State private var artist: Artist?
-    @State private var dominantColor: Color?
+    @State private var addedToQueueMessage: String?
     private let artworkManager = ArtworkManager.shared
     private let artistDAO = ArtistDAO()
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(spacing: 0) {
-            ZStack {
-                // Background with dominant color
-                if let dominantColor = dominantColor {
-                    dominantColor.opacity(0.15)
-                        .ignoresSafeArea()
-                }
-
-                VStack(spacing: 0) {
-                    headerSection
-                    AlbumSongsView(album: album)
-                }
+            headerSection
+            AlbumSongsView(album: album)
+        }
+        .overlay(alignment: .bottom) {
+            if let message = addedToQueueMessage {
+                Text(message)
+                    .font(.caption)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    .padding(.bottom, 8)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .animation(.easeInOut(duration: 0.3), value: addedToQueueMessage)
             }
         }
         .onAppear() {
@@ -55,24 +57,26 @@ struct AlbumDetailView: View {
                 .shadow(color: .black.opacity(0.3), radius: 12, x: 0, y: 6)
 
                 VStack (alignment: .leading, spacing: 14) {
-                    // "ALBUM" label
-                    Text("ALBUM")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .fontWeight(.semibold)
-                        .textCase(.uppercase)
-
                     // Album title
                     Text(album.title)
                         .font(.largeTitle)
                         .fontWeight(.bold)
                         .lineLimit(2)
 
-                    // Artist name
+                    // Artist name (clickable link to artist page)
                     if let artistName = album.artistName {
-                        Text(artistName)
-                            .font(.title3)
-                            .foregroundColor(.secondary)
+                        if let artist = artist {
+                            NavigationLink(value: artist) {
+                                Text(artistName)
+                                    .font(.title3)
+                                    .foregroundColor(.accentColor)
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            Text(artistName)
+                                .font(.title3)
+                                .foregroundColor(.secondary)
+                        }
                     }
 
                     // Metadata row
@@ -144,7 +148,6 @@ struct AlbumDetailView: View {
 
                 Spacer()
             }
-            .background(.regularMaterial)
             .padding(16)
     }
     
@@ -153,25 +156,6 @@ struct AlbumDetailView: View {
             if case .success(let image) = result {
                 DispatchQueue.main.async {
                     artwork = image
-                    updateDominantColor(from: image)
-                }
-            }
-        }
-    }
-
-    private func updateDominantColor(from artwork: NSImage?) {
-        guard let artwork = artwork else {
-            withAnimation(.easeInOut(duration: 0.3)) {
-                dominantColor = nil
-            }
-            return
-        }
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            let extractedColor = ColorExtractor.extractDominantColor(from: artwork)
-            DispatchQueue.main.async {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    dominantColor = extractedColor
                 }
             }
         }
@@ -208,7 +192,12 @@ struct AlbumDetailView: View {
     private func addToQueue() {
         let trackDAO = TrackDAO()
         let tracks = trackDAO.getByAlbumId(albumId: album.id)
+        guard !tracks.isEmpty else { return }
         QueueManager.shared.addToQueue(tracks)
+        addedToQueueMessage = "\(tracks.count) track\(tracks.count == 1 ? "" : "s") added to queue"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            addedToQueueMessage = nil
+        }
     }
 }
 

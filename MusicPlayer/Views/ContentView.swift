@@ -1,11 +1,18 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @State private var selection: SidebarItem? = .home
     @State private var showQueue = false
+    @State private var showNowPlaying = true
     @StateObject private var searchManager = SearchManager()
     @State private var localEventMonitor: Any?
     @State private var isLibraryEmpty: Bool = true
+    @State private var showSearchDropdown = false
+    @State private var navigationPath = NavigationPath()
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var showKeyboardShortcuts = false
+    @ObservedObject private var nowPlaying = NowPlayingManager.shared
 
     var body: some View {
         if isLibraryEmpty {
@@ -27,86 +34,137 @@ struct ContentView: View {
                 // Main content area (navigation + now playing sidebar)
                 HStack(spacing: 0) {
                     // Left content - Navigation split view
-                    NavigationSplitView(columnVisibility: .constant(.all)) {
+                    NavigationSplitView(columnVisibility: $columnVisibility) {
                         Sidebar(selection: $selection)
                             .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 300)
                     } detail: {
-                        NavigationStack {
-                            switch selection {
-                            case .home:
-                                HomeView()
-                            case .albums:
-                                AlbumsView()
-                            case .artists:
-                                ArtistsView()
-                            case .songs:
-                                SongsView()
-                            case .favorites:
-                                PlaylistView(favorites: true)
-                                    .id("favorites")
-                            case .search:
-                                SearchResultsView()
-                                    .environmentObject(searchManager)
-                            case .playlist(let playlist):
-                                PlaylistView(playlist: playlist)
-                                    .id(playlist.id)
-                            case .none:
-                                Text("Select something from the sidebar")
-                                    .foregroundStyle(.secondary)
+                        NavigationStack(path: $navigationPath) {
+                            Group {
+                                switch selection {
+                                case .home:
+                                    HomeView()
+                                        .navigationTitle("Home")
+                                case .albums:
+                                    AlbumsView()
+                                        .navigationTitle("Albums")
+                                case .artists:
+                                    ArtistsView()
+                                        .navigationTitle("Artists")
+                                case .songs:
+                                    SongsView()
+                                        .navigationTitle("Songs")
+                                case .favorites:
+                                    PlaylistView(favorites: true)
+                                        .id("favorites")
+                                        .navigationTitle("Liked Songs")
+                                case .recentlyAdded:
+                                    RecentlyAddedView()
+                                        .navigationTitle("Recently Added")
+                                case .search:
+                                    SearchResultsView()
+                                        .environmentObject(searchManager)
+                                        .navigationTitle("Search")
+                                case .stats:
+                                    StatsView()
+                                        .navigationTitle("Statistics")
+                                case .folders:
+                                    FolderBrowserView()
+                                        .navigationTitle("Folders")
+                                case .columnBrowser:
+                                    ColumnBrowserView()
+                                        .navigationTitle("Browser")
+                                case .playlist(let playlist):
+                                    PlaylistView(playlist: playlist)
+                                        .id(playlist.id)
+                                        .navigationTitle(playlist.name)
+                                case .none:
+                                    Text("Select something from the sidebar")
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .navigationDestination(for: Artist.self) { artist in
+                                ArtistDetailView(artist: artist)
+                            }
+                            .navigationDestination(for: Album.self) { album in
+                                AlbumDetailView(album: album)
                             }
                         }
-                        .toolbar {
-                            ToolbarItem(placement: .automatic) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "magnifyingglass")
-                                        .foregroundColor(.secondary)
-                                        .font(.system(size: 13))
-                                    TextField("Search tracks, albums, artists...", text: $searchManager.searchText)
-                                        .textFieldStyle(.plain)
-                                        .frame(width: 220)
-                                        .onChange(of: searchManager.searchText) { _, newValue in
-                                            searchManager.performSearch()
-                                            if !newValue.isEmpty && selection != .search {
-                                                selection = .search
-                                            }
+                        .overlay(alignment: .topTrailing) {
+                            if showSearchDropdown && !searchManager.searchText.isEmpty {
+                                SearchDropdownView(
+                                    searchManager: searchManager,
+                                    onTrackSelected: { track in
+                                        PlayerManager.shared.play(track: track)
+                                        dismissSearch()
+                                    },
+                                    onAlbumSelected: { album in
+                                        dismissSearch()
+                                        navigationPath.append(album)
+                                    },
+                                    onArtistSelected: { artist in
+                                        dismissSearch()
+                                        navigationPath.append(artist)
+                                    }
+                                )
+                                .padding(.top, 4)
+                                .padding(.trailing, 16)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                                .zIndex(100)
+                                .onTapGesture {}  // Prevent taps from propagating
+                            }
+                        }
+                        .onTapGesture {
+                            if showSearchDropdown {
+                                showSearchDropdown = false
+                            }
+                        }
+                    }
+                    .toolbar {
+                        ToolbarItem(placement: .automatic) {
+                            SearchTextField(text: $searchManager.searchText, placeholder: "Search tracks, albums, artists...")
+                                .frame(width: 240)
+                                .onChange(of: searchManager.searchText) { _, newValue in
+                                    searchManager.performSearch()
+                                    if !newValue.isEmpty {
+                                        withAnimation(.easeOut(duration: 0.2)) {
+                                            showSearchDropdown = true
                                         }
-
-                                    if !searchManager.searchText.isEmpty {
-                                        Button(action: {
-                                            searchManager.clearSearch()
-                                        }) {
-                                            Image(systemName: "xmark.circle.fill")
-                                                .foregroundColor(.secondary)
-                                                .font(.system(size: 12))
+                                    } else {
+                                        withAnimation(.easeOut(duration: 0.15)) {
+                                            showSearchDropdown = false
                                         }
-                                        .buttonStyle(.plain)
                                     }
                                 }
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color(nsColor: .controlBackgroundColor))
-                                .cornerRadius(6)
-                            }
                         }
                     }
-
-                    Divider()
 
                     // Right sidebar - Now Playing / Queue
-                    Group {
-                        if showQueue {
-                            QueueView()
-                        } else {
-                            NowPlayingView()
+                    if showNowPlaying || showQueue {
+                        Divider()
+
+                        Group {
+                            if showQueue {
+                                QueueView()
+                            } else {
+                                NowPlayingView()
+                            }
                         }
+                        .frame(width: 280)
+                        .animation(.easeInOut(duration: 0.25), value: showQueue)
                     }
-                    .frame(width: 280)
                 }
 
                 Divider()
 
                 // Bottom player control bar
-                PlayerControlBar(showQueue: $showQueue)
+                PlayerControlBar(showQueue: $showQueue, showNowPlaying: $showNowPlaying)
+            }
+            .background {
+                if let color = nowPlaying.dominantColor {
+                    color.opacity(0.12)
+                        .ignoresSafeArea()
+                        .animation(.easeInOut(duration: 0.5), value: nowPlaying.dominantColor != nil)
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ToggleQueue"))) { _ in
                 withAnimation {
@@ -126,13 +184,88 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: Constants.Notifications.libraryPathsChanged)) { _ in
                 isLibraryEmpty = MediaScannerManager.shared.isLibraryEmpty()
             }
+            .onReceive(NotificationCenter.default.publisher(for: Constants.Notifications.navigateToArtist)) { notification in
+                if let artist = notification.object as? Artist {
+                    navigationPath = NavigationPath()
+                    navigationPath.append(artist)
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: Constants.Notifications.navigateToAlbum)) { notification in
+                if let album = notification.object as? Album {
+                    navigationPath = NavigationPath()
+                    navigationPath.append(album)
+                }
+            }
+            .sheet(isPresented: $showKeyboardShortcuts) {
+                KeyboardShortcutsView()
+            }
+            .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                handleFileDrop(providers)
+                return true
+            }
+        }
+    }
+
+    private func dismissSearch() {
+        searchManager.clearSearch()
+        showSearchDropdown = false
+    }
+
+    private func handleFileDrop(_ providers: [NSItemProvider]) {
+        for provider in providers {
+            provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { item, _ in
+                guard let data = item as? Data,
+                      let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
+
+                var isDirectory: ObjCBool = false
+                FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+
+                if isDirectory.boolValue {
+                    // Folder dropped — add as library path
+                    DispatchQueue.main.async {
+                        MediaScannerManager.shared.addLibraryPath(url.path)
+                    }
+                } else {
+                    // Single file — add its parent folder
+                    let parentDir = url.deletingLastPathComponent().path
+                    DispatchQueue.main.async {
+                        MediaScannerManager.shared.addLibraryPath(parentDir)
+                    }
+                }
+            }
         }
     }
 
     private func setupKeyboardShortcuts() {
         localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+            // Cmd+Shift+F for immersive mode
+            if event.keyCode == 3 && flags == [.command, .shift] {
+                ImmersiveWindowManager.shared.toggle()
+                return nil
+            }
+
+            // Cmd+Shift+M for mini player
+            if event.keyCode == 46 && flags == [.command, .shift] {
+                MiniPlayerWindowManager.shared.toggle()
+                return nil
+            }
+
+            // Cmd+F for search focus
+            if event.keyCode == 3 && flags == .command {
+                showSearchDropdown = true
+                return nil
+            }
+
+            // Cmd+/ for keyboard shortcuts
+            if event.keyCode == 44 && flags == .command {
+                showKeyboardShortcuts = true
+                return nil
+            }
+
             // Check if Space bar is pressed and no text field is focused
-            if event.keyCode == 49 && event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty {
+            if event.keyCode == 49 && flags.isEmpty {
                 // Check if a text field or text view is the first responder
                 if let firstResponder = NSApp.keyWindow?.firstResponder,
                    !(firstResponder is NSText) && !(firstResponder is NSTextView) {
