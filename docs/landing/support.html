@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Support — Orange Music Player</title>
+    <link rel="icon" type="image/png" href="../../orange-music-player-icon-2.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,700&family=JetBrains+Mono:wght@400;500&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --mandarin: #FF6600;
+            --amber: #FFB300;
+            --gunmetal: #1A1A1A;
+            --obsidian: #0A0A0A;
+            --silver: #E5E5E5;
+            --muted: #777777;
+            --pitch: #000000;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html {
+            scroll-behavior: smooth;
+            background: var(--pitch);
+            color: var(--silver);
+        }
+
+        body {
+            font-family: 'DM Sans', sans-serif;
+            font-weight: 400;
+            line-height: 1.7;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .mono { font-family: 'JetBrains Mono', monospace; }
+
+        /* ── Navigation ── */
+        nav {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            z-index: 100;
+            padding: 20px 0;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        }
+        nav .container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+            color: var(--silver);
+        }
+        .nav-brand img { border-radius: 10px; }
+        .nav-brand span { font-weight: 700; font-size: 15px; letter-spacing: -0.02em; }
+        .nav-brand span em { font-style: normal; color: var(--mandarin); }
+        .back-link {
+            color: var(--muted);
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+            transition: color 0.3s;
+        }
+        .back-link:hover { color: var(--silver); }
+
+        /* ── Layout ── */
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 clamp(24px, 5vw, 80px);
+        }
+
+        .content {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 140px 0 120px;
+        }
+
+        /* ── Header ── */
+        .page-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--amber);
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            margin-bottom: 16px;
+        }
+
+        .page-title {
+            font-family: 'Playfair Display', serif;
+            font-size: clamp(32px, 4vw, 48px);
+            font-weight: 700;
+            line-height: 1.1;
+            letter-spacing: -0.02em;
+            margin-bottom: 12px;
+        }
+
+        .page-subtitle {
+            font-size: 17px;
+            color: var(--muted);
+            margin-bottom: 60px;
+            max-width: 560px;
+        }
+
+        /* ── Content ── */
+        h2 {
+            font-size: 22px;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+            margin-top: 56px;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        h2:first-of-type { margin-top: 0; }
+
+        p {
+            color: var(--muted);
+            font-size: 15px;
+            margin-bottom: 16px;
+        }
+
+        p strong { color: var(--silver); font-weight: 500; }
+
+        a { color: var(--mandarin); text-decoration: none; transition: color 0.3s; }
+        a:hover { color: var(--amber); }
+
+        ul {
+            list-style: none;
+            margin-bottom: 20px;
+        }
+
+        ul li {
+            color: var(--muted);
+            font-size: 15px;
+            padding: 8px 0;
+            padding-left: 20px;
+            position: relative;
+        }
+
+        ul li::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 16px;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--mandarin);
+            opacity: 0.5;
+        }
+
+        ul li strong { color: var(--silver); font-weight: 500; }
+
+        .email-cta {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            background: var(--mandarin);
+            color: var(--pitch);
+            padding: 14px 28px;
+            border-radius: 10px;
+            text-decoration: none;
+            font-weight: 700;
+            font-size: 15px;
+            margin-top: 8px;
+            transition: transform 0.2s, box-shadow 0.3s;
+        }
+        .email-cta:hover {
+            color: var(--pitch);
+            transform: translateY(-2px);
+            box-shadow: 0 12px 40px rgba(255, 102, 0, 0.35);
+        }
+
+        .faq-item { margin-bottom: 28px; }
+        .faq-item h3 {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--silver);
+            margin-bottom: 8px;
+        }
+        .faq-item p { margin-bottom: 0; }
+
+        /* ── Footer ── */
+        footer {
+            border-top: 1px solid rgba(255, 255, 255, 0.04);
+            padding: 48px 0;
+        }
+        .footer-grid {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .footer-copy { font-size: 13px; color: var(--muted); }
+        .footer-links { display: flex; gap: 24px; }
+        .footer-links a {
+            font-size: 13px;
+            color: var(--muted);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+        .footer-links a:hover { color: var(--silver); }
+    </style>
+</head>
+<body>
+
+<nav>
+    <div class="container">
+        <a href="index.html" class="nav-brand">
+            <img src="../../orange-music-player-icon-2.png" alt="Orange Music Player" width="44" height="44">
+            <span><em>Orange</em> Music Player</span>
+        </a>
+        <a href="index.html" class="back-link">&larr; Back to Home</a>
+    </div>
+</nav>
+
+<div class="container">
+    <div class="content">
+        <div class="page-label">Support</div>
+        <h1 class="page-title">How can we help?</h1>
+        <p class="page-subtitle">Have a question, found a bug, or want to request a feature? We'd love to hear from you.</p>
+
+        <h2>Contact</h2>
+        <p>For any questions, bug reports, or feature requests, reach out by email. We typically respond within 48 hours.</p>
+        <a href="mailto:cristianv.paraschiv@gmail.com" class="email-cta">
+            cristianv.paraschiv@gmail.com
+        </a>
+
+        <h2>Bug Reports</h2>
+        <p>When reporting a bug, please include:</p>
+        <ul>
+            <li><strong>macOS version</strong> (e.g. Sonoma 14.5)</li>
+            <li><strong>App version</strong> (found in Settings &rarr; About)</li>
+            <li><strong>Steps to reproduce</strong> the issue</li>
+            <li><strong>What you expected</strong> vs. what actually happened</li>
+            <li><strong>Audio format</strong> if the issue is playback-related (e.g. FLAC 24/96)</li>
+        </ul>
+        <p>You can also <a href="https://github.com/nicorescu/Orange-Music-Player/issues" target="_blank">open an issue on GitHub</a>.</p>
+
+        <h2>Frequently Asked Questions</h2>
+
+        <div class="faq-item">
+            <h3>What audio formats are supported?</h3>
+            <p>FLAC, ALAC, WAV, AIFF, DSD (DSF/DFF), MP3, AAC, OGG Vorbis, Opus, WMA, APE, WavPack, Musepack, and CUE sheets.</p>
+        </div>
+
+        <div class="faq-item">
+            <h3>Can I use it with a NAS?</h3>
+            <p>Yes. Point Orange at any mounted network volume. The app uses security-scoped bookmarks to remember your folder permissions across launches.</p>
+        </div>
+
+        <div class="faq-item">
+            <h3>Does the app phone home or collect analytics?</h3>
+            <p>No. Zero telemetry, zero analytics, zero accounts. See our <a href="privacy.html">Privacy Policy</a> for full details.</p>
+        </div>
+
+        <div class="faq-item">
+            <h3>What are the system requirements?</h3>
+            <p>macOS 14.0 (Sonoma) or later on Apple Silicon.</p>
+        </div>
+
+        <div class="faq-item">
+            <h3>How do I enable Last.fm scrobbling?</h3>
+            <p>Go to Settings &rarr; Playback &rarr; Last.fm, enter your credentials, and click Connect. Scrobbling starts automatically.</p>
+        </div>
+
+        <div class="faq-item">
+            <h3>Is the app really free?</h3>
+            <p>Yes. No subscriptions, no in-app purchases, no ads. Just music.</p>
+        </div>
+    </div>
+</div>
+
+<footer>
+    <div class="container">
+        <div class="footer-grid">
+            <div class="footer-copy">&copy; 2026 Cristi Paraschiv. All rights reserved.</div>
+            <div class="footer-links">
+                <a href="index.html">Home</a>
+                <a href="privacy.html">Privacy</a>
+                <a href="support.html">Support</a>
+            </div>
+        </div>
+    </div>
+</footer>
+
+</body>
+</html>

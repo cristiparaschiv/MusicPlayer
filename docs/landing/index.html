@@ -1,0 +1,926 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Orange Music Player — Your Library, Liberated</title>
+    <meta name="description" content="A native macOS player for audiophiles who want bit-perfect, privacy-first listening. Own your airwaves.">
+    <link rel="icon" type="image/png" href="../../orange-music-player-icon-2.png">
+    <meta property="og:title" content="Orange Music Player — Your Library, Liberated">
+    <meta property="og:description" content="Studio-grade macOS music player. FLAC, DSD, gapless playback, 10-band EQ, synced lyrics. No subscriptions. No cloud. Just purity.">
+    <meta property="og:image" content="hero.png">
+    <meta property="og:type" content="website">
+    <meta name="twitter:card" content="summary_large_image">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&family=Playfair+Display:ital,wght@0,700;1,400&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --mandarin: #FF6600;
+            --mandarin-glow: rgba(255, 102, 0, 0.15);
+            --amber: #FFB300;
+            --gunmetal: #1A1A1A;
+            --obsidian: #0A0A0A;
+            --silver: #E5E5E5;
+            --muted: #777777;
+            --pitch: #000000;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html {
+            scroll-behavior: smooth;
+            background: var(--pitch);
+            color: var(--silver);
+        }
+
+        body {
+            font-family: 'DM Sans', sans-serif;
+            font-weight: 400;
+            line-height: 1.6;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* ── Utility ── */
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .display { font-family: 'Playfair Display', serif; }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 clamp(24px, 5vw, 80px);
+        }
+
+        /* ── Navigation ── */
+        nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+            padding: 20px 0;
+            transition: background 0.4s, backdrop-filter 0.4s;
+        }
+        nav.scrolled {
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+        }
+        nav .container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+            color: var(--silver);
+        }
+        .nav-brand svg { width: 32px; height: 32px; }
+        .nav-brand span {
+            font-weight: 700;
+            font-size: 15px;
+            letter-spacing: -0.02em;
+        }
+        .nav-brand span em {
+            font-style: normal;
+            color: var(--mandarin);
+        }
+        .nav-links { display: flex; gap: 32px; align-items: center; }
+        .nav-links a {
+            color: var(--muted);
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+            transition: color 0.3s;
+        }
+        .nav-links a:hover { color: var(--silver); }
+        .nav-cta {
+            background: var(--mandarin) !important;
+            color: var(--pitch) !important;
+            padding: 10px 24px;
+            border-radius: 8px;
+            font-weight: 700 !important;
+            font-size: 13px !important;
+            transition: transform 0.2s, box-shadow 0.3s !important;
+        }
+        .nav-cta:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 30px rgba(255, 102, 0, 0.3);
+        }
+
+        /* ── Hero ── */
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            position: relative;
+            overflow: hidden;
+            padding-top: 80px;
+        }
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: -40%;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 800px;
+            height: 800px;
+            background: radial-gradient(circle, rgba(255, 102, 0, 0.08) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        .hero-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 80px;
+            align-items: center;
+        }
+        .hero-text { position: relative; z-index: 2; }
+        .hero-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--amber);
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            margin-bottom: 24px;
+            opacity: 0;
+            animation: fadeUp 0.8s ease forwards 0.2s;
+        }
+        .hero h1 {
+            font-family: 'Playfair Display', serif;
+            font-size: clamp(42px, 5.5vw, 72px);
+            font-weight: 700;
+            line-height: 1.05;
+            letter-spacing: -0.02em;
+            color: var(--silver);
+            margin-bottom: 28px;
+            opacity: 0;
+            animation: fadeUp 0.8s ease forwards 0.4s;
+        }
+        .hero h1 .orange { color: var(--mandarin); }
+        .hero-sub {
+            font-size: 18px;
+            color: var(--muted);
+            line-height: 1.7;
+            max-width: 480px;
+            margin-bottom: 40px;
+            opacity: 0;
+            animation: fadeUp 0.8s ease forwards 0.6s;
+        }
+        .hero-actions {
+            display: flex;
+            gap: 16px;
+            align-items: center;
+            opacity: 0;
+            animation: fadeUp 0.8s ease forwards 0.8s;
+        }
+        .btn-primary {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            background: var(--mandarin);
+            color: var(--pitch);
+            padding: 16px 32px;
+            border-radius: 12px;
+            text-decoration: none;
+            font-weight: 700;
+            font-size: 15px;
+            transition: transform 0.2s, box-shadow 0.3s;
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 40px rgba(255, 102, 0, 0.35);
+        }
+        .btn-primary svg { width: 18px; height: 18px; }
+        .btn-secondary {
+            color: var(--muted);
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 500;
+            transition: color 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .btn-secondary:hover { color: var(--silver); }
+        .hero-specs {
+            display: flex;
+            gap: 32px;
+            margin-top: 48px;
+            padding-top: 32px;
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
+            opacity: 0;
+            animation: fadeUp 0.8s ease forwards 1s;
+        }
+        .hero-spec {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--muted);
+            letter-spacing: 0.05em;
+        }
+        .hero-spec strong {
+            display: block;
+            color: var(--silver);
+            font-size: 13px;
+            margin-bottom: 2px;
+        }
+        .hero-visual {
+            position: relative;
+            opacity: 0;
+            animation: fadeIn 1.2s ease forwards 0.6s;
+        }
+
+        /* ── Screenshot Placeholder ── */
+        .screenshot-frame {
+            position: relative;
+            border-radius: 12px;
+            overflow: hidden;
+            background: var(--gunmetal);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            aspect-ratio: 16 / 10;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 40px 80px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.03);
+        }
+        .screenshot-frame::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(135deg, rgba(255, 102, 0, 0.03), transparent 60%);
+            pointer-events: none;
+        }
+        .screenshot-frame img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+        .screenshot-placeholder {
+            text-align: center;
+            color: var(--muted);
+            font-size: 13px;
+        }
+        .screenshot-placeholder .icon {
+            font-size: 32px;
+            margin-bottom: 12px;
+            opacity: 0.3;
+        }
+        .screenshot-placeholder .label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            color: var(--mandarin);
+            opacity: 0.6;
+        }
+
+        /* ── Section Styles ── */
+        section {
+            padding: clamp(80px, 12vw, 160px) 0;
+            position: relative;
+        }
+
+        .section-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--amber);
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            margin-bottom: 16px;
+        }
+
+        .section-title {
+            font-family: 'Playfair Display', serif;
+            font-size: clamp(32px, 4vw, 52px);
+            font-weight: 700;
+            line-height: 1.1;
+            letter-spacing: -0.02em;
+            margin-bottom: 20px;
+        }
+
+        .section-desc {
+            font-size: 17px;
+            color: var(--muted);
+            max-width: 560px;
+            line-height: 1.7;
+        }
+
+        /* ── Features ── */
+        .features-section {
+            background: linear-gradient(180deg, var(--pitch) 0%, var(--obsidian) 100%);
+        }
+        .features-header { margin-bottom: 80px; }
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 2px;
+        }
+        .feature-card {
+            background: rgba(255, 255, 255, 0.02);
+            padding: 48px 36px;
+            position: relative;
+            transition: background 0.4s;
+            border: 1px solid rgba(255, 255, 255, 0.03);
+        }
+        .feature-card:hover {
+            background: rgba(255, 102, 0, 0.03);
+        }
+        .feature-card:hover .feature-icon {
+            color: var(--mandarin);
+        }
+        .feature-icon {
+            font-size: 28px;
+            margin-bottom: 24px;
+            color: var(--muted);
+            transition: color 0.4s;
+            display: block;
+            width: 48px;
+            height: 48px;
+            line-height: 48px;
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 10px;
+        }
+        .feature-card h3 {
+            font-size: 17px;
+            font-weight: 700;
+            margin-bottom: 10px;
+            letter-spacing: -0.01em;
+        }
+        .feature-card p {
+            font-size: 14px;
+            color: var(--muted);
+            line-height: 1.7;
+        }
+
+        /* ── Showcase (alternating screenshot sections) ── */
+        .showcase { overflow: hidden; }
+        .showcase + .showcase { padding-top: 0; }
+        .showcase-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 80px;
+            align-items: center;
+        }
+        .showcase-grid.reverse .showcase-text { order: 2; }
+        .showcase-grid.reverse .showcase-visual { order: 1; }
+        .showcase-text h2 {
+            font-family: 'Playfair Display', serif;
+            font-size: clamp(28px, 3vw, 40px);
+            font-weight: 700;
+            line-height: 1.15;
+            margin-bottom: 20px;
+        }
+        .showcase-text p {
+            color: var(--muted);
+            font-size: 16px;
+            line-height: 1.7;
+            margin-bottom: 24px;
+        }
+        .showcase-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .showcase-tag {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            padding: 6px 14px;
+            border: 1px solid rgba(255, 102, 0, 0.2);
+            border-radius: 100px;
+            color: var(--mandarin);
+        }
+
+        /* ── Formats ── */
+        .formats-section {
+            text-align: center;
+            background: var(--obsidian);
+            border-top: 1px solid rgba(255, 255, 255, 0.04);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        }
+        .formats-section .section-desc { margin: 0 auto 60px; }
+        .formats-list {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 16px;
+            max-width: 700px;
+            margin: 0 auto;
+        }
+        .format-badge {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            font-weight: 500;
+            padding: 12px 24px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 8px;
+            color: var(--silver);
+            background: rgba(255, 255, 255, 0.02);
+            transition: border-color 0.3s, color 0.3s;
+        }
+        .format-badge:hover {
+            border-color: var(--mandarin);
+            color: var(--mandarin);
+        }
+
+        /* ── Technical Specs ── */
+        .specs-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 2px;
+            margin-top: 60px;
+        }
+        .spec-block {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.03);
+            padding: 36px 32px;
+            text-align: left;
+        }
+        .spec-block h4 {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--mandarin);
+            margin-bottom: 12px;
+        }
+        .spec-block p {
+            font-size: 13px;
+            line-height: 1.8;
+            color: var(--muted);
+        }
+
+        /* ── Testimonial / Brand Promise ── */
+        .promise-section {
+            text-align: center;
+            position: relative;
+        }
+        .promise-section::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(255, 102, 0, 0.06), transparent 70%);
+            pointer-events: none;
+        }
+        .promise-quote {
+            font-family: 'Playfair Display', serif;
+            font-size: clamp(28px, 3.5vw, 48px);
+            font-weight: 700;
+            line-height: 1.25;
+            max-width: 800px;
+            margin: 0 auto 32px;
+            position: relative;
+            z-index: 1;
+        }
+        .promise-quote .orange { color: var(--mandarin); }
+        .promise-attribution {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--muted);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+
+        /* ── CTA Section ── */
+        .cta-section {
+            text-align: center;
+            padding-bottom: clamp(100px, 15vw, 200px);
+        }
+        .cta-section .section-title {
+            max-width: 600px;
+            margin: 0 auto 16px;
+        }
+        .cta-section .section-desc {
+            margin: 0 auto 48px;
+            text-align: center;
+        }
+        .cta-requirements {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--muted);
+            margin-top: 20px;
+            letter-spacing: 0.05em;
+        }
+
+        /* ── Footer ── */
+        footer {
+            border-top: 1px solid rgba(255, 255, 255, 0.04);
+            padding: 48px 0;
+        }
+        .footer-grid {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .footer-copy {
+            font-size: 13px;
+            color: var(--muted);
+        }
+        .footer-links { display: flex; gap: 24px; }
+        .footer-links a {
+            font-size: 13px;
+            color: var(--muted);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+        .footer-links a:hover { color: var(--silver); }
+
+        /* ── Animations ── */
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(24px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .reveal {
+            opacity: 0;
+            transform: translateY(32px);
+            transition: opacity 0.8s ease, transform 0.8s ease;
+        }
+        .reveal.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* ── Responsive ── */
+        @media (max-width: 900px) {
+            .hero-grid,
+            .showcase-grid,
+            .features-grid {
+                grid-template-columns: 1fr;
+            }
+            .showcase-grid.reverse .showcase-text,
+            .showcase-grid.reverse .showcase-visual {
+                order: unset;
+            }
+            .hero-visual { margin-top: 40px; }
+            .hero-specs { flex-wrap: wrap; }
+            .nav-links { display: none; }
+            .features-grid { gap: 0; }
+            .specs-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- ── Navigation ── -->
+<nav id="nav">
+    <div class="container">
+        <a href="#" class="nav-brand">
+            <img src="../../orange-music-player-icon-2.png" alt="Orange Music Player" width="44" height="44" style="border-radius: 10px;">
+            <span><em>Orange</em> Music Player</span>
+        </a>
+        <div class="nav-links">
+            <a href="#features">Features</a>
+            <a href="#formats">Formats</a>
+            <a href="#privacy">Privacy</a>
+            <a href="support.html">Support</a>
+            <a href="#download" class="nav-cta">Download Free</a>
+        </div>
+    </div>
+</nav>
+
+<!-- ── Hero ── -->
+<section class="hero">
+    <div class="container">
+        <div class="hero-grid">
+            <div class="hero-text">
+                <div class="hero-label">Native macOS &middot; Zero Cloud &middot; Bit-Perfect</div>
+                <h1>Your library.<br><span class="orange">Liberated.</span></h1>
+                <p class="hero-sub">The ultimate sanctuary for your sonic collection. Studio-grade playback, stunning interface, absolute privacy. No subscriptions. No compromise.</p>
+                <p style="font-size: 13px; color: var(--amber); margin-bottom: 32px; margin-top: -24px; opacity: 0; animation: fadeUp 0.8s ease forwards 0.7s;">Frustrated with Apple Music's local library support? You're not alone.</p>
+                <div class="hero-actions">
+                    <a href="#download" class="btn-primary">
+                        <svg viewBox="0 0 18 18" fill="none"><path d="M9 2v10m0 0l-3.5-3.5M9 12l3.5-3.5M3 15h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                        Download for macOS
+                    </a>
+                    <a href="#features" class="btn-secondary">Explore features &darr;</a>
+                </div>
+                <div class="hero-specs">
+                    <div class="hero-spec">
+                        <strong>FLAC &middot; ALAC &middot; DSD</strong>
+                        Bit-perfect delivery
+                    </div>
+                    <div class="hero-spec">
+                        <strong>Gapless &middot; Crossfade</strong>
+                        Seamless transitions
+                    </div>
+                    <div class="hero-spec">
+                        <strong>100% Private</strong>
+                        No accounts, no tracking
+                    </div>
+                </div>
+            </div>
+            <div class="hero-visual">
+                <div class="screenshot-frame">
+                    <img src="hero.png" alt="Orange Music Player — Home view with album grid, now playing sidebar, and dynamic theming">
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ── Features Grid ── -->
+<section class="features-section" id="features">
+    <div class="container">
+        <div class="features-header reveal">
+            <div class="section-label">Engineered for Fidelity</div>
+            <h2 class="section-title">Precision instruments<br>for your desktop</h2>
+            <p class="section-desc">Every feature built with one obsession: delivering your music exactly as the artist intended.</p>
+        </div>
+        <div class="features-grid reveal">
+            <div class="feature-card">
+                <span class="feature-icon">&#9835;</span>
+                <h3>Gapless Playback</h3>
+                <p>Zero-latency transitions between tracks. Live albums and concept records play as one unbroken performance.</p>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">&#9676;</span>
+                <h3>10-Band Equalizer</h3>
+                <p>Studio-grade parametric EQ with custom presets. Shape every frequency to match your headphones and room.</p>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">&#10023;</span>
+                <h3>Audio Effects Suite</h3>
+                <p>Reverb, delay, pitch and speed controls. Transform your listening experience with real-time processing.</p>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">&#8644;</span>
+                <h3>Crossfade</h3>
+                <p>Adjustable crossfade from 1 to 10 seconds. Smooth, DJ-quality transitions between every track.</p>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">&#9055;</span>
+                <h3>Smart Library</h3>
+                <p>Automatic metadata extraction, album artwork, and intelligent change detection. Your collection, perfectly organized.</p>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">&#9711;</span>
+                <h3>Dynamic Theming</h3>
+                <p>Colors shift to match your album artwork. Every record creates its own atmosphere.</p>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">&#9878;</span>
+                <h3>Smart Playlists</h3>
+                <p>Rule-based playlists that update automatically. Filter by genre, year, play count, rating, and more.</p>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">&#8982;</span>
+                <h3>Keyboard-First</h3>
+                <p>Full keyboard shortcut support. Play, pause, skip, search, and navigate without touching the trackpad.</p>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">&#9740;</span>
+                <h3>Last.fm Scrobbling</h3>
+                <p>Automatic scrobbling keeps your listening history in sync. Your taste, documented.</p>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">&#9733;</span>
+                <h3>Star Ratings</h3>
+                <p>Rate tracks 1&ndash;5 stars. Filter and sort by rating. Build smart playlists from your favorites.</p>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">&#8776;</span>
+                <h3>Volume Normalization</h3>
+                <p>ReplayGain support with track and album modes. Consistent volume without touching the dial.</p>
+            </div>
+            <div class="feature-card">
+                <span class="feature-icon">&#9842;</span>
+                <h3>Bit-Perfect Output</h3>
+                <p>Exclusive/Hog mode and automatic sample rate switching. Integer mode for DAC-direct playback without OS mixing.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ── Showcase: Now Playing ── -->
+<section class="showcase">
+    <div class="container">
+        <div class="showcase-grid reveal">
+            <div class="showcase-text">
+                <div class="section-label">Immersive Listening</div>
+                <h2>Feel the warmth of every <span style="color: var(--mandarin)">frequency</span></h2>
+                <p>The Now Playing view transforms your desktop into a dedicated listening room. Album artwork fills the space while real-time audio visualization responds to every note.</p>
+                <div class="showcase-tags">
+                    <span class="showcase-tag">Now Playing</span>
+                    <span class="showcase-tag">Mini Player</span>
+                    <span class="showcase-tag">Immersive Mode</span>
+                </div>
+            </div>
+            <div class="showcase-visual">
+                <div class="screenshot-frame">
+                    <img src="now-playing.png" alt="Immersive Now Playing view with album artwork and lyrics">
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ── Showcase: Synced Lyrics ── -->
+<section class="showcase">
+    <div class="container">
+        <div class="showcase-grid reverse reveal">
+            <div class="showcase-text">
+                <div class="section-label">Synced Lyrics</div>
+                <h2>Every word, perfectly <span style="color: var(--mandarin)">in sync</span></h2>
+                <p>Embedded LRC lyrics scroll in real-time with your music. The current line highlights as it plays, so you never miss a beat. Click any line to jump to that moment.</p>
+                <div class="showcase-tags">
+                    <span class="showcase-tag">LRC Support</span>
+                    <span class="showcase-tag">Real-Time Sync</span>
+                    <span class="showcase-tag">Click to Seek</span>
+                </div>
+            </div>
+            <div class="showcase-visual">
+                <div class="screenshot-frame">
+                    <img src="synced-lyrics.png" alt="Synced lyrics scrolling in real-time alongside album artwork">
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ── Showcase: Audio Effects ── -->
+<section class="showcase">
+    <div class="container">
+        <div class="showcase-grid reverse reveal">
+            <div class="showcase-text">
+                <div class="section-label">Studio-Grade DSP</div>
+                <h2>Your personal <span style="color: var(--mandarin)">mastering suite</span></h2>
+                <p>A complete audio effects chain: 10-band parametric EQ, reverb with 13 room presets, delay with feedback control, and pitch/speed adjustment. Combined presets let you switch between Slowed+Reverb, Concert Hall, Nightcore, and your own custom configurations instantly.</p>
+                <div class="showcase-tags">
+                    <span class="showcase-tag">Equalizer</span>
+                    <span class="showcase-tag">Reverb</span>
+                    <span class="showcase-tag">Delay</span>
+                    <span class="showcase-tag">Pitch / Speed</span>
+                </div>
+            </div>
+            <div class="showcase-visual">
+                <div class="screenshot-frame">
+                    <img src="audio-effects.png" alt="Audio Effects with 10-band EQ overlay on artist grid">
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ── Showcase: Library ── -->
+<section class="showcase">
+    <div class="container">
+        <div class="showcase-grid reveal">
+            <div class="showcase-text">
+                <div class="section-label">Library Management</div>
+                <h2>Curate a collection that reflects your <span style="color: var(--mandarin)">history</span></h2>
+                <p>Browse by albums, artists, or songs. Create playlists, mark favorites, explore your recently played and most listened tracks. Column browser for power users. Folder browser for NAS libraries.</p>
+                <div class="showcase-tags">
+                    <span class="showcase-tag">Albums</span>
+                    <span class="showcase-tag">Artists</span>
+                    <span class="showcase-tag">Playlists</span>
+                    <span class="showcase-tag">Statistics</span>
+                </div>
+            </div>
+            <div class="showcase-visual">
+                <div class="screenshot-frame">
+                    <img src="library.png" alt="Album grid library view with sidebar navigation and playlists">
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ── Formats ── -->
+<section class="formats-section" id="formats">
+    <div class="container">
+        <div class="reveal">
+            <div class="section-label">Format Support</div>
+            <h2 class="section-title">Bit-perfect delivery.<br>Every format.</h2>
+            <p class="section-desc">Powered by SFBAudioEngine. Your files, decoded with surgical precision and zero resampling.</p>
+        </div>
+        <div class="formats-list reveal">
+            <span class="format-badge">FLAC</span>
+            <span class="format-badge">ALAC</span>
+            <span class="format-badge">WAV</span>
+            <span class="format-badge">AIFF</span>
+            <span class="format-badge">MP3</span>
+            <span class="format-badge">AAC</span>
+            <span class="format-badge">OGG</span>
+            <span class="format-badge">WMA</span>
+            <span class="format-badge">APE</span>
+            <span class="format-badge">WavPack</span>
+            <span class="format-badge">Opus</span>
+            <span class="format-badge">DSD</span>
+            <span class="format-badge">CUE</span>
+        </div>
+    </div>
+</section>
+
+<!-- ── Privacy ── -->
+<section class="promise-section" id="privacy">
+    <div class="container reveal">
+        <div class="section-label">Zero Compromise Privacy</div>
+        <p class="promise-quote">Your music belongs to <span class="orange">you</span>, not a subscription. No accounts. No telemetry. No cloud. Just <span class="orange">purity.</span></p>
+        <p class="promise-attribution">100% local &middot; No data collection &middot; No network required</p>
+    </div>
+</section>
+
+<!-- ── Technical Specs ── -->
+<section class="formats-section" id="specs">
+    <div class="container">
+        <div class="reveal">
+            <div class="section-label">For the Audiophiles</div>
+            <h2 class="section-title">Under the hood</h2>
+            <p class="section-desc">Every detail engineered for transparency and precision.</p>
+        </div>
+        <div class="specs-grid reveal">
+            <div class="spec-block">
+                <h4 class="mono">Supported Formats</h4>
+                <p class="mono">FLAC &middot; ALAC &middot; WAV &middot; AIFF &middot; DSD (DSF/DFF) &middot; MP3 &middot; AAC &middot; OGG Vorbis &middot; Opus &middot; WMA &middot; APE &middot; WavPack &middot; Musepack &middot; CUE sheets</p>
+            </div>
+            <div class="spec-block">
+                <h4 class="mono">Sample Rates</h4>
+                <p class="mono">44.1 &middot; 48 &middot; 88.2 &middot; 96 &middot; 176.4 &middot; 192 &middot; 352.8 &middot; 384 kHz<br>DSD64 &middot; DSD128 &middot; DSD256</p>
+            </div>
+            <div class="spec-block">
+                <h4 class="mono">Bit Depths</h4>
+                <p class="mono">16-bit &middot; 24-bit &middot; 32-bit float &middot; 1-bit (DSD)</p>
+            </div>
+            <div class="spec-block">
+                <h4 class="mono">Audio Chain</h4>
+                <p class="mono">SFBAudioEngine &rarr; CoreAudio HAL &rarr; Exclusive/Hog Mode &rarr; Integer Mode &rarr; DAC<br>Zero OS mixing. Bit-perfect path.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ── Pricing ── -->
+<section class="promise-section" id="pricing">
+    <div class="container reveal">
+        <div class="section-label">Simple Pricing</div>
+        <p class="promise-quote"><span class="orange">Free.</span> No strings attached.</p>
+        <p class="promise-attribution">No subscriptions &middot; No in-app purchases &middot; No ads &middot; Just music</p>
+    </div>
+</section>
+
+<!-- ── Download CTA ── -->
+<section class="cta-section" id="download">
+    <div class="container reveal">
+        <div class="section-label">Ready?</div>
+        <h2 class="section-title">Own your <span style="color: var(--mandarin)">airwaves</span></h2>
+        <p class="section-desc">The connoisseur's macOS player. Completely free.</p>
+        <a href="https://apps.apple.com/app/orange-music-player/id_PLACEHOLDER" class="btn-primary" style="font-size: 17px; padding: 18px 40px;">
+            <svg viewBox="0 0 18 18" fill="none" style="width:20px;height:20px"><path d="M13.5 9.75c-.01-1.86 1.52-2.76 1.59-2.8a3.45 3.45 0 00-2.72-1.47c-1.14-.12-2.25.68-2.83.68-.6 0-1.5-.67-2.48-.65a3.63 3.63 0 00-3.05 1.87c-1.32 2.28-.33 5.63.93 7.48.63.91 1.38 1.93 2.35 1.89.96-.04 1.31-.61 2.47-.61 1.14 0 1.46.61 2.46.59.99-.02 1.64-.91 2.25-1.83a7.7 7.7 0 001.03-2.1 3.23 3.23 0 01-1.95-2.96l-.05-.09zM11.58 4.12a3.3 3.3 0 00.75-2.37 3.36 3.36 0 00-2.17 1.12 3.14 3.14 0 00-.77 2.28c.82.06 1.66-.4 2.19-1.03z" fill="currentColor"/></svg>
+            Download Free on the Mac App Store
+        </a>
+        <p class="cta-requirements">Requires macOS 14.0 (Sonoma) or later &middot; Apple Silicon</p>
+    </div>
+</section>
+
+<!-- ── Footer ── -->
+<footer>
+    <div class="container">
+        <div class="footer-grid">
+            <div class="footer-copy">&copy; 2026 Cristi Paraschiv. All rights reserved.</div>
+            <div class="footer-links">
+                <a href="privacy.html">Privacy</a>
+                <a href="support.html">Support</a>
+                <a href="https://github.com/nicorescu/Orange-Music-Player" target="_blank">GitHub</a>
+            </div>
+        </div>
+    </div>
+</footer>
+
+<script>
+    // Scroll-based nav background
+    const nav = document.getElementById('nav');
+    window.addEventListener('scroll', () => {
+        nav.classList.toggle('scrolled', window.scrollY > 40);
+    });
+
+    // Reveal on scroll
+    const reveals = document.querySelectorAll('.reveal');
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                entry.target.classList.add('visible');
+                observer.unobserve(entry.target);
+            }
+        });
+    }, { threshold: 0.15 });
+    reveals.forEach(el => observer.observe(el));
+</script>
+
+</body>
+</html>

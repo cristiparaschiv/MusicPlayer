@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Policy — Orange Music Player</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,700&family=JetBrains+Mono:wght@400;500&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --mandarin: #FF6600;
+            --amber: #FFB300;
+            --gunmetal: #1A1A1A;
+            --obsidian: #0A0A0A;
+            --silver: #E5E5E5;
+            --muted: #777777;
+            --pitch: #000000;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html {
+            scroll-behavior: smooth;
+            background: var(--pitch);
+            color: var(--silver);
+        }
+
+        body {
+            font-family: 'DM Sans', sans-serif;
+            font-weight: 400;
+            line-height: 1.7;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .mono { font-family: 'JetBrains Mono', monospace; }
+
+        /* ── Navigation ── */
+        nav {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            z-index: 100;
+            padding: 20px 0;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        }
+        nav .container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+            color: var(--silver);
+        }
+        .nav-brand img { border-radius: 10px; }
+        .nav-brand span { font-weight: 700; font-size: 15px; letter-spacing: -0.02em; }
+        .nav-brand span em { font-style: normal; color: var(--mandarin); }
+        .back-link {
+            color: var(--muted);
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+            transition: color 0.3s;
+        }
+        .back-link:hover { color: var(--silver); }
+
+        /* ── Layout ── */
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 clamp(24px, 5vw, 80px);
+        }
+
+        .content {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 140px 0 120px;
+        }
+
+        /* ── Header ── */
+        .page-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--amber);
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            margin-bottom: 16px;
+        }
+
+        .page-title {
+            font-family: 'Playfair Display', serif;
+            font-size: clamp(32px, 4vw, 48px);
+            font-weight: 700;
+            line-height: 1.1;
+            letter-spacing: -0.02em;
+            margin-bottom: 12px;
+        }
+
+        .page-updated {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--muted);
+            letter-spacing: 0.05em;
+            margin-bottom: 60px;
+        }
+
+        /* ── Content ── */
+        h2 {
+            font-size: 22px;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+            margin-top: 56px;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        h3 {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--mandarin);
+            margin-top: 32px;
+            margin-bottom: 10px;
+        }
+
+        p {
+            color: var(--muted);
+            font-size: 15px;
+            margin-bottom: 16px;
+        }
+
+        p strong { color: var(--silver); font-weight: 500; }
+
+        ul {
+            list-style: none;
+            margin-bottom: 20px;
+        }
+
+        ul li {
+            color: var(--muted);
+            font-size: 15px;
+            padding: 8px 0;
+            padding-left: 20px;
+            position: relative;
+        }
+
+        ul li::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 16px;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--mandarin);
+            opacity: 0.5;
+        }
+
+        ul li strong { color: var(--silver); font-weight: 500; }
+
+        /* ── Table ── */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 24px 0;
+            font-size: 13px;
+        }
+
+        th {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--amber);
+            text-align: left;
+            padding: 12px 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        td {
+            padding: 12px 16px;
+            color: var(--muted);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+        }
+
+        tr:hover td { color: var(--silver); }
+
+        /* ── Footer ── */
+        footer {
+            border-top: 1px solid rgba(255, 255, 255, 0.04);
+            padding: 48px 0;
+        }
+        .footer-grid {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .footer-copy { font-size: 13px; color: var(--muted); }
+        .footer-links { display: flex; gap: 24px; }
+        .footer-links a {
+            font-size: 13px;
+            color: var(--muted);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+        .footer-links a:hover { color: var(--silver); }
+    </style>
+</head>
+<body>
+
+<nav>
+    <div class="container">
+        <a href="index.html" class="nav-brand">
+            <img src="../../orange-music-player-icon-2.png" alt="Orange Music Player" width="44" height="44">
+            <span><em>Orange</em> Music Player</span>
+        </a>
+        <a href="index.html" class="back-link">&larr; Back to Home</a>
+    </div>
+</nav>
+
+<div class="container">
+    <div class="content">
+        <div class="page-label">Legal</div>
+        <h1 class="page-title">Privacy Policy</h1>
+        <p class="page-updated">Last updated: March 11, 2026</p>
+
+        <h2>Overview</h2>
+        <p>Orange Music Player is a macOS desktop music player. Your privacy is important to us. This policy explains what data the app accesses, stores, and transmits.</p>
+
+        <h2>Data Collection</h2>
+        <p>Orange Music Player does <strong>not</strong> collect, track, or transmit any personal data or analytics. There are no user accounts required to use the app (Last.fm integration is optional), no advertising, and no telemetry.</p>
+
+        <h2>Data Stored Locally</h2>
+        <p>All app data is stored locally on your Mac and never leaves your device unless you explicitly enable Last.fm integration.</p>
+        <ul>
+            <li><strong>Music library database</strong> &mdash; Track metadata (title, artist, album, duration, file path, etc.) extracted from your audio files is stored in a local SQLite database.</li>
+            <li><strong>Play history and statistics</strong> &mdash; Listening history, play counts, and favorites are stored locally.</li>
+            <li><strong>Playlists</strong> &mdash; User-created playlists are stored locally.</li>
+            <li><strong>Preferences</strong> &mdash; App settings such as shuffle/repeat mode, queue state, and library folder paths are stored in UserDefaults.</li>
+            <li><strong>Security-scoped bookmarks</strong> &mdash; When you grant folder access, the app stores security-scoped bookmarks to remember your permission across launches.</li>
+        </ul>
+
+        <h2>File System Access</h2>
+        <p>The app accesses audio files on your local filesystem and network-attached storage (NAS) only within folders you explicitly select. Access is governed by macOS App Sandbox and requires your permission via the system file picker.</p>
+
+        <h2>Network Connections</h2>
+        <p>Orange Music Player connects to the internet only for the following optional features:</p>
+
+        <h3>Album Artwork Fetching</h3>
+        <ul>
+            <li><strong>MusicBrainz</strong> (musicbrainz.org) &mdash; Queried to match album and artist metadata. Only album titles and artist names are sent.</li>
+            <li><strong>Cover Art Archive</strong> (coverartarchive.org) &mdash; Used to download album cover artwork based on MusicBrainz release IDs.</li>
+            <li><strong>Fanart.tv</strong> (fanart.tv) &mdash; Used to download artist images based on MusicBrainz artist IDs.</li>
+        </ul>
+        <p>No personal information is sent to these services. Only music metadata (artist names, album titles) is transmitted to retrieve artwork.</p>
+
+        <h3>Last.fm Integration (Optional)</h3>
+        <p>If you choose to connect your Last.fm account:</p>
+        <ul>
+            <li><strong>Last.fm</strong> (ws.audioscrobbler.com) &mdash; Your Last.fm username and listening activity (track title, artist, album, timestamp) are sent to Last.fm for scrobbling.</li>
+            <li>Your Last.fm session key is stored securely in the macOS Keychain.</li>
+            <li>You can disconnect your Last.fm account at any time from Settings, which removes stored credentials.</li>
+        </ul>
+        <p>No data is sent to Last.fm unless you explicitly authenticate and enable scrobbling.</p>
+
+        <h2>Third-Party Services</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Service</th>
+                    <th>Purpose</th>
+                    <th>Data Sent</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>MusicBrainz</td>
+                    <td>Album/artist lookup</td>
+                    <td>Artist names, album titles</td>
+                </tr>
+                <tr>
+                    <td>Cover Art Archive</td>
+                    <td>Album artwork</td>
+                    <td>MusicBrainz release IDs</td>
+                </tr>
+                <tr>
+                    <td>Fanart.tv</td>
+                    <td>Artist images</td>
+                    <td>MusicBrainz artist IDs</td>
+                </tr>
+                <tr>
+                    <td>Last.fm</td>
+                    <td>Scrobbling (optional)</td>
+                    <td>Listening activity, username</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h2>Data Sharing</h2>
+        <p>Orange Music Player does not sell, share, or transfer your data to any third party for advertising, marketing, or data mining purposes.</p>
+
+        <h2>Data Retention</h2>
+        <p>All data is stored locally and persists until you delete the app or clear its data. Last.fm credentials can be removed from Settings at any time. There is no server-side data retention as the app has no backend.</p>
+
+        <h2>Children's Privacy</h2>
+        <p>Orange Music Player does not knowingly collect any personal information from children.</p>
+
+        <h2>Changes to This Policy</h2>
+        <p>We may update this privacy policy from time to time. Any changes will be reflected in the "Last updated" date above.</p>
+
+        <h2>Contact</h2>
+        <p>If you have questions about this privacy policy, please contact us at <a href="mailto:cristianv.paraschiv@gmail.com" style="color: var(--mandarin);">cristianv.paraschiv@gmail.com</a>.</p>
+    </div>
+</div>
+
+<footer>
+    <div class="container">
+        <div class="footer-grid">
+            <div class="footer-copy">&copy; 2026 Cristi Paraschiv. All rights reserved.</div>
+            <div class="footer-links">
+                <a href="index.html">Home</a>
+                <a href="privacy.html">Privacy</a>
+                <a href="support.html">Support</a>
+            </div>
+        </div>
+    </div>
+</footer>
+
+</body>
+</html>
