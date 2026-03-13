@@ -45,6 +45,7 @@ struct AlbumGridItem: View {
     let album: Album
     @State private var artwork: NSImage?
     @State private var isHovered = false
+    @State private var artworkTask: Task<Void, Never>?
 
     private let artworkManager = ArtworkManager.shared
 
@@ -133,11 +134,22 @@ struct AlbumGridItem: View {
             }
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("\(album.title) by \(album.artistName ?? "Unknown Artist")")
         .contextMenu {
             albumContextMenu
         }
         .onAppear {
             loadArtwork()
+        }
+        .onDisappear {
+            artworkTask?.cancel()
+            artworkTask = nil
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Constants.Notifications.artworkDidChange)) { notification in
+            if let albumId = notification.userInfo?["albumId"] as? Int64, albumId == album.id {
+                artwork = nil
+                loadArtwork()
+            }
         }
     }
 
@@ -155,15 +167,27 @@ struct AlbumGridItem: View {
                 playNext()
             }
 
+            Divider()
+
+            Button("Choose Artwork...") {
+                ArtworkPickerWindowManager.shared.show(for: album)
+            }
         }
     }
 
     private func loadArtwork() {
-        artworkManager.fetchAlbumArtwork(for: album) { result in
-            if case .success(let image) = result {
-                DispatchQueue.main.async {
-                    artwork = image
-                }
+        artworkTask?.cancel()
+        artworkTask = Task {
+            // Debounce: skip items that flash by during fast scroll
+            try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+            guard !Task.isCancelled else { return }
+
+            do {
+                let image = try await artworkManager.fetchAlbumArtwork(for: album)
+                guard !Task.isCancelled else { return }
+                artwork = image
+            } catch {
+                // Artwork not found — leave placeholder
             }
         }
     }

@@ -15,6 +15,7 @@ struct Sidebar: View {
     @State private var renameText = ""
     @State private var dropTargetPlaylistId: Int64? = nil
     @State private var importMessage: String?
+    @State private var availableStations: [RadioStation] = []
     @ObservedObject private var scanner = MediaScannerManager.shared
 
     private let playlistDAO = PlaylistDAO()
@@ -43,7 +44,7 @@ struct Sidebar: View {
                     }
                 }
 
-                Section("Presets") {
+                Section("Discover") {
                     NavigationLink(value: SidebarItem.recentlyAdded) {
                         Label("Recently Added", systemImage: "clock.fill")
                     }
@@ -99,6 +100,16 @@ struct Sidebar: View {
                             Button("Delete", role: .destructive) {
                                 playlistToDelete = playlist
                                 showingDeleteConfirmation = true
+                            }
+                        }
+                    }
+                }
+
+                if !availableStations.isEmpty {
+                    Section("Radio") {
+                        ForEach(availableStations) { station in
+                            NavigationLink(value: SidebarItem.radio(station)) {
+                                Label(station.name, systemImage: station.icon)
                             }
                         }
                     }
@@ -217,6 +228,10 @@ struct Sidebar: View {
         }
         .onAppear {
             loadPlaylists()
+            loadAvailableStations()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Constants.Notifications.libraryDidUpdate)) { _ in
+            loadAvailableStations()
         }
         .onReceive(NotificationCenter.default.publisher(for: Constants.Notifications.playlistsChanged)) { _ in
             loadPlaylists()
@@ -225,6 +240,13 @@ struct Sidebar: View {
 
     private func loadPlaylists() {
         playlists = playlistDAO.getAll()
+    }
+
+    private func loadAvailableStations() {
+        let dao = TrackDAO()
+        availableStations = RadioStation.allStations.filter { station in
+            dao.countTracksByGenreKeywords(station.keywords, excludingKeywords: station.excludedKeywords) > 0
+        }
     }
 
     private func createPlaylist() {

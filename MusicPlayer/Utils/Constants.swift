@@ -45,6 +45,25 @@ struct Constants {
         static let eqCustomPresets = "eqCustomPresets"
         static let replayGainMode = "replayGainMode"
         static let lastFMScrobblingEnabled = "lastFMScrobblingEnabled"
+        static let remoteControlEnabled = "remoteControlEnabled"
+        static let remoteControlPort = "remoteControlPort"
+
+        static let reverbEnabled = "reverbEnabled"
+        static let reverbPresetIndex = "reverbPresetIndex"
+        static let reverbWetDryMix = "reverbWetDryMix"
+
+        static let delayEnabled = "delayEnabled"
+        static let delayTime = "delayTime"
+        static let delayFeedback = "delayFeedback"
+        static let delayWetDryMix = "delayWetDryMix"
+        static let delayLowPassCutoff = "delayLowPassCutoff"
+
+        static let pitchSpeedEnabled = "pitchSpeedEnabled"
+        static let pitchValue = "pitchValue"
+        static let rateValue = "rateValue"
+
+        static let audioEffectsPresets = "audioEffectsPresets"
+        static let audioEffectsSelectedPresetId = "audioEffectsSelectedPresetId"
     }
 
     // Notifications
@@ -66,6 +85,9 @@ struct Constants {
         static let trackMetadataChanged = Notification.Name("trackMetadataChanged")
         static let navigateToArtist = Notification.Name("navigateToArtist")
         static let navigateToAlbum = Notification.Name("navigateToAlbum")
+        static let artworkDidChange = Notification.Name("artworkDidChange")
+        static let radioStateChanged = Notification.Name("radioStateChanged")
+        static let remoteServerStateChanged = Notification.Name("remoteServerStateChanged")
     }
 }
 

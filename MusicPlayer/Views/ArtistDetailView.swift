@@ -117,6 +117,18 @@ struct ArtistDetailView: View {
                             .padding(.vertical, 10)
                         }
                         .buttonStyle(.bordered)
+
+                        Button(action: { playNext() }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "text.insert")
+                                    .font(.system(size: 14))
+                                Text("Play Next")
+                                    .font(.system(size: 14, weight: .semibold))
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 10)
+                        }
+                        .buttonStyle(.bordered)
                     }
                     .padding(.top, 8)
                 }
@@ -263,6 +275,15 @@ struct ArtistDetailView: View {
         }
     }
 
+    private func playNext() {
+        guard let tracksInfo = tracksInfo, !tracksInfo.tracks.isEmpty else { return }
+        QueueManager.shared.insertNext(tracksInfo.tracks)
+        addedToQueueMessage = "\(tracksInfo.tracks.count) track\(tracksInfo.tracks.count == 1 ? "" : "s") will play next"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            addedToQueueMessage = nil
+        }
+    }
+
     private func getTopTracks() -> [Track]? {
         guard let tracksInfo = tracksInfo else { return nil }
 
@@ -278,7 +299,7 @@ struct ArtistDetailView: View {
 struct TrackRow: View {
     let track: Track
     let index: Int
-    @State private var trackToEdit: Track?
+    @State private var tracksToEdit: [Track]?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -303,6 +324,14 @@ struct TrackRow: View {
             Text(track.duration.formattedDuration)
                 .font(.caption)
                 .foregroundColor(.secondary)
+
+            Button(action: { PlayerManager.shared.play(track: track) }) {
+                Image(systemName: Icons.playFill)
+                    .font(.caption)
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(.accentColor)
+            .help("Play track")
         }
         .padding(.horizontal)
         .padding(.vertical, 6)
@@ -353,15 +382,17 @@ struct TrackRow: View {
             Divider()
 
             Button("Edit Info...") {
-                trackToEdit = track
+                tracksToEdit = [track]
             }
 
             Button("Show in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: track.filePath)])
             }
         }
-        .sheet(item: $trackToEdit) { track in
-            TrackEditorView(track: track)
+        .sheet(isPresented: Binding(get: { tracksToEdit != nil }, set: { if !$0 { tracksToEdit = nil } })) {
+            if let tracks = tracksToEdit {
+                TrackEditorView(tracks: tracks)
+            }
         }
     }
 }

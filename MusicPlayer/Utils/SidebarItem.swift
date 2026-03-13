@@ -12,6 +12,7 @@ enum SidebarItem: Hashable {
     case folders
     case columnBrowser
     case playlist(Playlist)
+    case radio(RadioStation)
 
     static func == (lhs: SidebarItem, rhs: SidebarItem) -> Bool {
         switch (lhs, rhs) {
@@ -26,6 +27,7 @@ enum SidebarItem: Hashable {
         case (.folders, .folders): return true
         case (.columnBrowser, .columnBrowser): return true
         case (.playlist(let lhs), .playlist(let rhs)): return lhs.id == rhs.id
+        case (.radio(let lhs), .radio(let rhs)): return lhs.id == rhs.id
         default: return false
         }
     }
@@ -43,6 +45,7 @@ enum SidebarItem: Hashable {
         case .folders: hasher.combine("folders")
         case .columnBrowser: hasher.combine("columnBrowser")
         case .playlist(let playlist): hasher.combine("playlist-\(playlist.id)")
+        case .radio(let station): hasher.combine("radio-\(station.id)")
         }
     }
 }

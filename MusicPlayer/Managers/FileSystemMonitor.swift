@@ -5,6 +5,7 @@ class FileSystemMonitor {
     private var monitoredPaths: [String] = []
     private let eventQueue = DispatchQueue(label: "com.orangemusicplayer.fsevents", qos: .background)
     private var retainedSelf: Unmanaged<FileSystemMonitor>?
+    private var debounceWorkItem: DispatchWorkItem?
 
     var onPathsChanged: (() -> Void)?
 
@@ -61,10 +62,13 @@ class FileSystemMonitor {
             }
 
             if hasRelevantChanges {
-                // Debounce: wait a bit before notifying (files might still be copying)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                    monitor.onPathsChanged?()
+                // Debounce: cancel previous and schedule new notification
+                monitor.debounceWorkItem?.cancel()
+                let workItem = DispatchWorkItem { [weak monitor] in
+                    monitor?.onPathsChanged?()
                 }
+                monitor.debounceWorkItem = workItem
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: workItem)
             }
         }
 
@@ -85,6 +89,9 @@ class FileSystemMonitor {
     }
 
     func stopMonitoring() {
+        debounceWorkItem?.cancel()
+        debounceWorkItem = nil
+
         if let stream = eventStream {
             FSEventStreamStop(stream)
             FSEventStreamInvalidate(stream)

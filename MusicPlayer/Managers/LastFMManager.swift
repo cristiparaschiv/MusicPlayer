@@ -37,26 +37,18 @@ class LastFMManager: ObservableObject {
 
         let signedParams = signParams(params)
 
-        guard var components = URLComponents(string: baseURL) else {
+        guard let url = URL(string: baseURL) else {
             completion(.failure(NSError(domain: "LastFM", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid base URL"])))
             return
         }
-        components.queryItems = signedParams.map { URLQueryItem(name: $0.key, value: $0.value) }
-        components.queryItems?.append(URLQueryItem(name: "format", value: "json"))
 
-        guard let componentURL = components.url else {
-            completion(.failure(NSError(domain: "LastFM", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
-            return
-        }
-
-        var request = URLRequest(url: componentURL)
+        // Build POST body directly — never put credentials in URL query parameters
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
 
-        // POST body
         let bodyString = signedParams.map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? $0.value)" }.joined(separator: "&")
         request.httpBody = (bodyString + "&format=json").data(using: .utf8)
-        request.url = URL(string: baseURL)
 
         URLSession.shared.dataTask(with: request) { [weak self] data, _, error in
             if let error = error {

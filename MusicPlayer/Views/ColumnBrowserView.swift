@@ -10,7 +10,7 @@ struct ColumnBrowserView: View {
     @State private var selectedArtist: String? = nil
     @State private var selectedAlbum: String? = nil
 
-    @State private var trackToEdit: Track?
+    @State private var tracksToEdit: [Track]?
 
     private let trackDAO = TrackDAO()
     private let db = DatabaseManager.shared
@@ -45,7 +45,7 @@ struct ColumnBrowserView: View {
             // Track list
             TrackTableView(
                 tracks: tracks,
-                config: TrackTableConfig(onEditTrack: { trackToEdit = $0 }),
+                config: TrackTableConfig(onEditTrack: { tracksToEdit = $0 }),
                 onPlayTrack: { track, allTracks in
                     if let index = allTracks.firstIndex(where: { $0.id == track.id }) {
                         QueueManager.shared.setQueue(allTracks, startIndex: index)
@@ -73,8 +73,10 @@ struct ColumnBrowserView: View {
         .onReceive(NotificationCenter.default.publisher(for: Constants.Notifications.libraryDidUpdate)) { _ in
             loadGenres(); loadArtists(); loadAlbums(); loadTracks()
         }
-        .sheet(item: $trackToEdit) { track in
-            TrackEditorView(track: track)
+        .sheet(isPresented: Binding(get: { tracksToEdit != nil }, set: { if !$0 { tracksToEdit = nil } })) {
+            if let tracks = tracksToEdit {
+                TrackEditorView(tracks: tracks)
+            }
         }
     }
 

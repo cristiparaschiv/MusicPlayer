@@ -45,7 +45,8 @@ struct ArtistGridItem: View {
     @State private var artwork: NSImage?
     @State private var tracksInfo: ArtistTracksInfo?
     @State private var isHovered = false
-    
+    @State private var artworkTask: Task<Void, Never>?
+
     private let trackDAO = TrackDAO()
 
     private let artworkManager = ArtworkManager.shared
@@ -116,6 +117,10 @@ struct ArtistGridItem: View {
         .onAppear {
             loadArtwork()
         }
+        .onDisappear {
+            artworkTask?.cancel()
+            artworkTask = nil
+        }
     }
 
     private var albumContextMenu: some View {
@@ -136,15 +141,21 @@ struct ArtistGridItem: View {
     }
 
     private func loadArtwork() {
-        
-        artworkManager.fetchArtistArtwork(for: artist) { result in
-            if case .success(let image) = result {
-                DispatchQueue.main.async {
-                    artwork = image
-                }
+        artworkTask?.cancel()
+        artworkTask = Task {
+            // Debounce: skip items that flash by during fast scroll
+            try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+            guard !Task.isCancelled else { return }
+
+            do {
+                let image = try await artworkManager.fetchArtistArtwork(for: artist)
+                guard !Task.isCancelled else { return }
+                artwork = image
+            } catch {
+                // Artwork not found — leave placeholder
             }
         }
-        
+
         // Load tracks info
         DispatchQueue.global(qos: .userInitiated).async {
             let info = trackDAO.getArtistTracksInfo(artistId: artist.id)
@@ -152,13 +163,6 @@ struct ArtistGridItem: View {
                 tracksInfo = info
             }
         }
-//        artworkManager.fetchAlbumArtwork(for: album) { result in
-//            if case .success(let image) = result {
-//                DispatchQueue.main.async {
-//                    artwork = image
-//                }
-//            }
-//        }
     }
 
     private func playArtist() {

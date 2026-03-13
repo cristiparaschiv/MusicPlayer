@@ -26,6 +26,12 @@ struct DailyPlayCount {
 class StatsDAO {
     private let db = DatabaseManager.shared
 
+    private static let dayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
     // MARK: - Overview
 
     func getTotalTracks() -> Int {
@@ -152,9 +158,7 @@ class StatsDAO {
         return db.query(sql: sql, parameters: [since.timeIntervalSince1970]).compactMap { row in
             guard let dateStr = row["play_date"] as? String,
                   let count = row["count"] as? Int64 else { return nil }
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyy-MM-dd"
-            guard let date = formatter.date(from: dateStr) else { return nil }
+            guard let date = Self.dayFormatter.date(from: dateStr) else { return nil }
             return DailyPlayCount(date: date, count: Int(count))
         }
     }

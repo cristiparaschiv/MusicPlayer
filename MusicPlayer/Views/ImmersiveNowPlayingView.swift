@@ -11,7 +11,7 @@ struct ImmersiveNowPlayingView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Top bar with ESC hint
+            // Top bar with close button and ESC hint
             HStack {
                 Spacer()
                 Text("ESC to exit")
@@ -20,6 +20,17 @@ struct ImmersiveNowPlayingView: View {
                     .padding(8)
                     .background(.ultraThinMaterial.opacity(0.3))
                     .cornerRadius(6)
+
+                Button(action: onClose) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 24))
+                        .foregroundColor(.white.opacity(0.5))
+                }
+                .buttonStyle(.plain)
+                .onHover { hovering in
+                    if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+                }
+                .help("Close immersive mode")
             }
             .padding()
 

@@ -5,7 +5,7 @@ struct TrackTableConfig {
     var showRemoveFromPlaylist: Bool = false
     var removeFromPlaylistLabel: String = "Remove from Playlist"
     var onRemoveFromPlaylist: (([Int64]) -> Void)? = nil
-    var onEditTrack: ((Track) -> Void)? = nil
+    var onEditTrack: (([Track]) -> Void)? = nil
     var allowReorder: Bool = false
     var onReorder: (([Int64]) -> Void)? = nil
 }
@@ -14,6 +14,7 @@ struct TrackTableView: NSViewRepresentable {
     let tracks: [Track]
     var config: TrackTableConfig = TrackTableConfig()
     var onPlayTrack: ((Track, [Track]) -> Void)?
+    var onScrollNearEnd: (() -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -38,6 +39,7 @@ struct TrackTableView: NSViewRepresentable {
             ("album", "Album", 150, 10000),
             ("year", "Year", 50, 60),
             ("duration", "Duration", 65, 80),
+            ("rating", "Rating", 80, 80),
         ]
 
         for (id, title, minWidth, maxWidth) in columns {
@@ -110,6 +112,11 @@ struct TrackTableView: NSViewRepresentable {
             guard row < tracks.count, let columnID = tableColumn?.identifier.rawValue else { return nil }
             let track = tracks[row]
 
+            // Trigger load-more when within 50 rows of the end
+            if row >= tracks.count - 50 {
+                parent.onScrollNearEnd?()
+            }
+
             // Title column uses a custom view with optional Hi-Res badge
             if columnID == "title" {
                 let cellID = NSUserInterfaceItemIdentifier("TrackTitleCell")
@@ -161,6 +168,29 @@ struct TrackTableView: NSViewRepresentable {
                 }
 
                 return container
+            }
+
+            // Rating column uses star view
+            if columnID == "rating" {
+                let cellID = NSUserInterfaceItemIdentifier("TrackRatingCell")
+                let starView: StarRatingNSView
+                if let existing = tableView.makeView(withIdentifier: cellID, owner: self) as? StarRatingNSView {
+                    starView = existing
+                } else {
+                    starView = StarRatingNSView()
+                    starView.identifier = cellID
+                }
+                starView.rating = track.rating
+                starView.onRate = { [weak self] newRating in
+                    let dao = TrackDAO()
+                    dao.updateRating(trackId: track.id, rating: newRating)
+                    // Refresh the track in-place
+                    if let idx = self?.tracks.firstIndex(where: { $0.id == track.id }),
+                       let updated = dao.getById(id: track.id) {
+                        self?.tracks[idx] = updated
+                    }
+                }
+                return starView
             }
 
             let cellID = NSUserInterfaceItemIdentifier("TrackCell_\(columnID)")
@@ -229,6 +259,10 @@ struct TrackTableView: NSViewRepresentable {
                     result = aYear < bYear ? .orderedAscending : (aYear > bYear ? .orderedDescending : .orderedSame)
                 case "duration":
                     result = a.duration < b.duration ? .orderedAscending : (a.duration > b.duration ? .orderedDescending : .orderedSame)
+                case "rating":
+                    let aRating = a.rating ?? 0
+                    let bRating = b.rating ?? 0
+                    result = aRating < bRating ? .orderedAscending : (aRating > bRating ? .orderedDescending : .orderedSame)
                 default:
                     result = .orderedSame
                 }
@@ -347,6 +381,26 @@ struct TrackTableView: NSViewRepresentable {
             favItem.representedObject = selectedTracks
             menu.addItem(favItem)
 
+            // Rate submenu
+            let rateSubmenu = NSMenu()
+            for stars in 1...5 {
+                let starTitle = String(repeating: "★", count: stars) + String(repeating: "☆", count: 5 - stars)
+                let rateItem = NSMenuItem(title: starTitle, action: #selector(contextRate(_:)), keyEquivalent: "")
+                rateItem.target = self
+                rateItem.tag = stars
+                rateItem.representedObject = selectedTracks
+                rateSubmenu.addItem(rateItem)
+            }
+            rateSubmenu.addItem(NSMenuItem.separator())
+            let clearRateItem = NSMenuItem(title: "Remove Rating", action: #selector(contextRate(_:)), keyEquivalent: "")
+            clearRateItem.target = self
+            clearRateItem.tag = 0
+            clearRateItem.representedObject = selectedTracks
+            rateSubmenu.addItem(clearRateItem)
+            let rateMenuItem = NSMenuItem(title: "Rate", action: nil, keyEquivalent: "")
+            rateMenuItem.submenu = rateSubmenu
+            menu.addItem(rateMenuItem)
+
             // Add to Playlist submenu
             let playlistSubmenu = NSMenu()
             let createItem = NSMenuItem(title: "Create New Playlist...", action: #selector(contextCreatePlaylistAndAdd(_:)), keyEquivalent: "")
@@ -381,13 +435,12 @@ struct TrackTableView: NSViewRepresentable {
 
             menu.addItem(NSMenuItem.separator())
 
-            // Edit Info (single track only)
-            if selectedTracks.count == 1 {
-                let editItem = NSMenuItem(title: "Edit Info", action: #selector(contextEditInfo(_:)), keyEquivalent: "")
-                editItem.target = self
-                editItem.representedObject = selectedTracks.first
-                menu.addItem(editItem)
-            }
+            // Edit Info (single or batch)
+            let editTitle = selectedTracks.count == 1 ? "Edit Info" : "Edit \(selectedTracks.count) Tracks..."
+            let editItem = NSMenuItem(title: editTitle, action: #selector(contextEditInfo(_:)), keyEquivalent: "")
+            editItem.target = self
+            editItem.representedObject = selectedTracks
+            menu.addItem(editItem)
 
             // Show in Finder
             let finderItem = NSMenuItem(title: "Show in Finder", action: #selector(contextShowInFinder(_:)), keyEquivalent: "")
@@ -443,8 +496,25 @@ struct TrackTableView: NSViewRepresentable {
         }
 
         @objc func contextEditInfo(_ sender: NSMenuItem) {
-            guard let track = sender.representedObject as? Track else { return }
-            config.onEditTrack?(track)
+            guard let tracks = sender.representedObject as? [Track] else { return }
+            config.onEditTrack?(tracks)
+        }
+
+        @objc func contextRate(_ sender: NSMenuItem) {
+            guard let selectedTracks = sender.representedObject as? [Track] else { return }
+            let rating: Int? = sender.tag == 0 ? nil : sender.tag
+            let dao = TrackDAO()
+            for track in selectedTracks {
+                dao.updateRating(trackId: track.id, rating: rating)
+            }
+            // Refresh tracks in the local list
+            for (idx, track) in tracks.enumerated() {
+                if selectedTracks.contains(where: { $0.id == track.id }),
+                   let updated = dao.getById(id: track.id) {
+                    tracks[idx] = updated
+                }
+            }
+            tableView?.reloadData()
         }
 
         @objc func contextShowInFinder(_ sender: NSMenuItem) {

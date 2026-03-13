@@ -27,6 +27,7 @@ struct StatsView: View {
     @State private var topAlbums: [AlbumStats] = []
     @State private var topGenres: [GenreStats] = []
     @State private var dailyActivity: [DailyPlayCount] = []
+    @State private var isLoading = false
 
     private let statsDAO = StatsDAO()
 
@@ -68,6 +69,13 @@ struct StatsView: View {
                 topAlbumsSection
             }
             .padding()
+        }
+        .overlay {
+            if isLoading {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(.ultraThinMaterial)
+            }
         }
         .onAppear { loadStats() }
         .onChange(of: period) { _, _ in loadStats() }
@@ -294,15 +302,28 @@ struct StatsView: View {
     }
 
     private func loadStats() {
+        isLoading = true
         let since = period.startDate
-        totalTracks = statsDAO.getTotalTracks()
-        totalListeningTime = statsDAO.getTotalListeningTime(since: since)
-        tracksPlayed = statsDAO.getTracksPlayedCount(since: since)
-        topArtists = statsDAO.getTopArtists(since: since)
-        topAlbums = statsDAO.getTopAlbums(since: since)
-        topGenres = statsDAO.getTopGenres(since: since)
-
-        let activitySince = since ?? Calendar.current.date(byAdding: .year, value: -1, to: Date())!
-        dailyActivity = statsDAO.getDailyPlayCounts(since: activitySince)
+        let dao = statsDAO
+        Task.detached {
+            let tracks = dao.getTotalTracks()
+            let listening = dao.getTotalListeningTime(since: since)
+            let played = dao.getTracksPlayedCount(since: since)
+            let artists = dao.getTopArtists(since: since)
+            let albums = dao.getTopAlbums(since: since)
+            let genres = dao.getTopGenres(since: since)
+            let activitySince = since ?? Calendar.current.date(byAdding: .year, value: -1, to: Date())!
+            let activity = dao.getDailyPlayCounts(since: activitySince)
+            await MainActor.run {
+                totalTracks = tracks
+                totalListeningTime = listening
+                tracksPlayed = played
+                topArtists = artists
+                topAlbums = albums
+                topGenres = genres
+                dailyActivity = activity
+                isLoading = false
+            }
+        }
     }
 }

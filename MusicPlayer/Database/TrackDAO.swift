@@ -1,5 +1,20 @@
 import Foundation
 
+// MARK: - Entity Cache Protocol
+
+/// Protocol for caching entity IDs during scan operations.
+/// Breaks the TrackDAO → MediaScannerManager circular dependency.
+protocol EntityCacheProvider: AnyObject {
+    func getCachedArtist(_ name: String) -> Int64?
+    func setCachedArtist(_ name: String, id: Int64)
+    func getCachedGenre(_ name: String) -> Int64?
+    func setCachedGenre(_ name: String, id: Int64)
+    func getCachedComposer(_ name: String) -> Int64?
+    func setCachedComposer(_ name: String, id: Int64)
+    func getCachedAlbum(_ key: String) -> Int64?
+    func setCachedAlbum(_ key: String, id: Int64)
+}
+
 // MARK: - Supporting Types
 
 struct ArtistTracksInfo {
@@ -18,6 +33,9 @@ struct ArtistTracksInfo {
 
 class TrackDAO {
     private let db = DatabaseManager.shared
+
+    /// Optional entity cache for scan operations. Set by MediaScannerManager before scanning.
+    weak var entityCache: EntityCacheProvider?
 
     func insert(track: Track) -> Int64 {
         let sql = """
@@ -88,6 +106,11 @@ class TrackDAO {
         return results.compactMap { rowToTrack($0) }
     }
 
+    func getTotalCount() -> Int {
+        let result = db.query(sql: "SELECT COUNT(*) as count FROM tracks").first
+        return Int(result?["count"] as? Int64 ?? 0)
+    }
+
     func getById(id: Int64) -> Track? {
         let sql = "SELECT * FROM tracks WHERE id = ?"
         let results = db.query(sql: sql, parameters: [id])
@@ -100,8 +123,22 @@ class TrackDAO {
         return results.first.flatMap { rowToTrack($0) }
     }
 
-    func getByAlbumId(albumId: Int64, orderBy: String = "disc_number, track_number, title_sort") -> [Track] {
-        let sql = "SELECT * FROM tracks WHERE album_id = ? ORDER BY \(orderBy)"
+    enum AlbumTrackOrder {
+        case `default` // disc_number, track_number, title_sort
+        case title
+        case duration
+
+        var sql: String {
+            switch self {
+            case .default: return "disc_number, track_number, title_sort"
+            case .title: return "title_sort"
+            case .duration: return "duration"
+            }
+        }
+    }
+
+    func getByAlbumId(albumId: Int64, orderBy: AlbumTrackOrder = .default) -> [Track] {
+        let sql = "SELECT * FROM tracks WHERE album_id = ? ORDER BY \(orderBy.sql)"
         let results = db.query(sql: sql, parameters: [albumId])
         return results.compactMap { rowToTrack($0) }
     }
@@ -395,11 +432,214 @@ class TrackDAO {
         ])
     }
 
+    /// Lightweight tag update — only updates specified fields without re-reading the file.
+    /// Pass nil for fields that should not be changed.
+    func updateTrackTags(
+        trackId: Int64,
+        title: String?,
+        artist: String?,
+        albumArtist: String?,
+        album: String?,
+        trackNumber: Int?,
+        discNumber: Int?,
+        year: Int?,
+        genre: String?,
+        composer: String?
+    ) {
+        var setClauses: [String] = []
+        var params: [Any] = []
+
+        if let title = title {
+            setClauses.append("title = ?")
+            params.append(title)
+            setClauses.append("title_sort = ?")
+            params.append(title.sortKey)
+        }
+
+        var newArtistId: Int64?
+        if let artist = artist {
+            newArtistId = getOrCreateArtist(name: artist)
+            if let artistId = newArtistId {
+                setClauses.append("artist_id = ?")
+                params.append(artistId)
+            }
+            setClauses.append("artist_name = ?")
+            params.append(artist)
+        }
+
+        if let albumArtist = albumArtist {
+            setClauses.append("album_artist_name = ?")
+            params.append(albumArtist)
+        }
+
+        // Determine effective artist for album association
+        let effectiveArtistName = albumArtist ?? artist
+        let effectiveArtistId: Int64? = {
+            if let name = effectiveArtistName { return getOrCreateArtist(name: name) }
+            return newArtistId
+        }()
+
+        if let album = album {
+            var genreId: Int64?
+            if let genre = genre {
+                genreId = getOrCreateGenre(name: genre)
+            }
+            let albumId = getOrCreateAlbum(
+                title: album,
+                artistId: effectiveArtistId,
+                artistName: effectiveArtistName,
+                year: year,
+                genreId: genreId,
+                genreName: genre
+            )
+            setClauses.append("album_id = ?")
+            params.append(albumId)
+            setClauses.append("album_title = ?")
+            params.append(album)
+        } else if effectiveArtistName != nil {
+            // Artist changed but album title didn't — update the track's existing album record
+            let trackRows = db.query(sql: "SELECT album_id, album_title FROM tracks WHERE id = ?", parameters: [trackId])
+            if let row = trackRows.first,
+               let existingAlbumId = row["album_id"] as? Int64,
+               let existingAlbumTitle = row["album_title"] as? String {
+                // Update the album's artist in-place
+                db.execute(sql: "UPDATE albums SET artist_id = ?, artist_name = ? WHERE id = ?",
+                           parameters: [effectiveArtistId as Any, effectiveArtistName as Any, existingAlbumId])
+            }
+        }
+
+        if let trackNumber = trackNumber {
+            setClauses.append("track_number = ?")
+            params.append(trackNumber)
+        }
+
+        if let discNumber = discNumber {
+            setClauses.append("disc_number = ?")
+            params.append(discNumber)
+        }
+
+        if let year = year {
+            setClauses.append("year = ?")
+            params.append(year)
+        }
+
+        if let genre = genre {
+            let genreId = getOrCreateGenre(name: genre)
+            setClauses.append("genre_id = ?")
+            params.append(genreId)
+            setClauses.append("genre_name = ?")
+            params.append(genre)
+        }
+
+        if let composer = composer {
+            let composerId = getOrCreateComposer(name: composer)
+            setClauses.append("composer_id = ?")
+            params.append(composerId)
+            setClauses.append("composer_name = ?")
+            params.append(composer)
+        }
+
+        guard !setClauses.isEmpty else { return }
+
+        let sql = "UPDATE tracks SET \(setClauses.joined(separator: ", ")) WHERE id = ?"
+        params.append(trackId)
+        db.execute(sql: sql, parameters: params)
+    }
+
+    /// Fetches random tracks matching any of the given genre keywords (case-insensitive LIKE).
+    /// Excludes track IDs in the `excluding` set.
+    func getRandomTracksByGenreKeywords(_ keywords: [String], limit: Int, excluding: Set<Int64> = [], excludingKeywords: [String] = []) -> [Track] {
+        guard !keywords.isEmpty else { return [] }
+
+        let likeClauses = keywords.map { _ in "LOWER(genre_name) LIKE ?" }
+        let whereGenre = likeClauses.joined(separator: " OR ")
+        var allParams: [Any] = keywords.map { "%\($0.lowercased())%" }
+
+        var sql = "SELECT * FROM tracks WHERE (\(whereGenre))"
+
+        // Exclude tracks that match higher-priority station keywords
+        if !excludingKeywords.isEmpty {
+            let excludeClauses = excludingKeywords.map { _ in "LOWER(genre_name) LIKE ?" }
+            sql += " AND NOT (\(excludeClauses.joined(separator: " OR ")))"
+            allParams.append(contentsOf: excludingKeywords.map { "%\($0.lowercased())%" as Any })
+        }
+
+        if !excluding.isEmpty {
+            let placeholders = excluding.map { _ in "?" }.joined(separator: ", ")
+            sql += " AND id NOT IN (\(placeholders))"
+            allParams.append(contentsOf: excluding.map { $0 as Any })
+        }
+
+        sql += " ORDER BY RANDOM() LIMIT ?"
+        allParams.append(limit)
+
+        let results = db.query(sql: sql, parameters: allParams)
+        return results.compactMap { trackFromRow($0) }
+    }
+
+    /// Returns the count of tracks matching any of the given genre keywords,
+    /// excluding tracks that also match higher-priority station keywords.
+    func countTracksByGenreKeywords(_ keywords: [String], excludingKeywords: [String] = []) -> Int {
+        guard !keywords.isEmpty else { return 0 }
+
+        let likeClauses = keywords.map { _ in "LOWER(genre_name) LIKE ?" }
+        let whereGenre = likeClauses.joined(separator: " OR ")
+        var allParams: [Any] = keywords.map { "%\($0.lowercased())%" }
+
+        var sql = "SELECT COUNT(*) as count FROM tracks WHERE (\(whereGenre))"
+
+        if !excludingKeywords.isEmpty {
+            let excludeClauses = excludingKeywords.map { _ in "LOWER(genre_name) LIKE ?" }
+            sql += " AND NOT (\(excludeClauses.joined(separator: " OR ")))"
+            allParams.append(contentsOf: excludingKeywords.map { "%\($0.lowercased())%" as Any })
+        }
+
+        let result = db.query(sql: sql, parameters: allParams).first
+        return Int(result?["count"] as? Int64 ?? 0)
+    }
+
+    /// Deletes orphaned artist/album/genre/composer records that no longer have any tracks referencing them.
+    /// Uses bulk DELETE with subqueries instead of per-ID queries.
+    func cleanupOrphanedRecords(artistIds: Set<Int64>, albumIds: Set<Int64>, genreIds: Set<Int64>, composerIds: Set<Int64>) {
+        if !albumIds.isEmpty {
+            let placeholders = albumIds.map { _ in "?" }.joined(separator: ", ")
+            db.execute(sql: """
+                DELETE FROM albums WHERE id IN (\(placeholders))
+                AND id NOT IN (SELECT DISTINCT album_id FROM tracks WHERE album_id IS NOT NULL)
+            """, parameters: albumIds.map { $0 as Any })
+        }
+
+        if !artistIds.isEmpty {
+            let placeholders = artistIds.map { _ in "?" }.joined(separator: ", ")
+            db.execute(sql: """
+                DELETE FROM artists WHERE id IN (\(placeholders))
+                AND id NOT IN (SELECT DISTINCT artist_id FROM tracks WHERE artist_id IS NOT NULL)
+                AND id NOT IN (SELECT DISTINCT artist_id FROM albums WHERE artist_id IS NOT NULL)
+            """, parameters: artistIds.map { $0 as Any })
+        }
+
+        if !genreIds.isEmpty {
+            let placeholders = genreIds.map { _ in "?" }.joined(separator: ", ")
+            db.execute(sql: """
+                DELETE FROM genres WHERE id IN (\(placeholders))
+                AND id NOT IN (SELECT DISTINCT genre_id FROM tracks WHERE genre_id IS NOT NULL)
+            """, parameters: genreIds.map { $0 as Any })
+        }
+
+        if !composerIds.isEmpty {
+            let placeholders = composerIds.map { _ in "?" }.joined(separator: ", ")
+            db.execute(sql: """
+                DELETE FROM composers WHERE id IN (\(placeholders))
+                AND id NOT IN (SELECT DISTINCT composer_id FROM tracks WHERE composer_id IS NOT NULL)
+            """, parameters: composerIds.map { $0 as Any })
+        }
+    }
+
     // MARK: - Helper Methods for Creating Related Entities
 
     private func getOrCreateArtist(name: String) -> Int64 {
         // Check in-memory cache first
-        if let cached = MediaScannerManager.shared.getCachedArtist(name) {
+        if let cached = entityCache?.getCachedArtist(name) {
             return cached
         }
 
@@ -407,7 +647,7 @@ class TrackDAO {
         let selectSql = "SELECT id FROM artists WHERE name = ?"
         let results = db.query(sql: selectSql, parameters: [name])
         if let row = results.first, let id = row["id"] as? Int64 {
-            MediaScannerManager.shared.setCachedArtist(name, id: id)
+            entityCache?.setCachedArtist(name, id: id)
             return id
         }
 
@@ -417,43 +657,43 @@ class TrackDAO {
         VALUES (?, ?)
         """
         let id = db.executeInsert(sql: insertSql, parameters: [name, name.sortKey])
-        MediaScannerManager.shared.setCachedArtist(name, id: id)
+        entityCache?.setCachedArtist(name, id: id)
         return id
     }
 
     private func getOrCreateGenre(name: String) -> Int64 {
-        if let cached = MediaScannerManager.shared.getCachedGenre(name) {
+        if let cached = entityCache?.getCachedGenre(name) {
             return cached
         }
 
         let selectSql = "SELECT id FROM genres WHERE name = ?"
         let results = db.query(sql: selectSql, parameters: [name])
         if let row = results.first, let id = row["id"] as? Int64 {
-            MediaScannerManager.shared.setCachedGenre(name, id: id)
+            entityCache?.setCachedGenre(name, id: id)
             return id
         }
 
         let insertSql = "INSERT INTO genres (name) VALUES (?)"
         let id = db.executeInsert(sql: insertSql, parameters: [name])
-        MediaScannerManager.shared.setCachedGenre(name, id: id)
+        entityCache?.setCachedGenre(name, id: id)
         return id
     }
 
     private func getOrCreateComposer(name: String) -> Int64 {
-        if let cached = MediaScannerManager.shared.getCachedComposer(name) {
+        if let cached = entityCache?.getCachedComposer(name) {
             return cached
         }
 
         let selectSql = "SELECT id FROM composers WHERE name = ?"
         let results = db.query(sql: selectSql, parameters: [name])
         if let row = results.first, let id = row["id"] as? Int64 {
-            MediaScannerManager.shared.setCachedComposer(name, id: id)
+            entityCache?.setCachedComposer(name, id: id)
             return id
         }
 
         let insertSql = "INSERT INTO composers (name) VALUES (?)"
         let id = db.executeInsert(sql: insertSql, parameters: [name])
-        MediaScannerManager.shared.setCachedComposer(name, id: id)
+        entityCache?.setCachedComposer(name, id: id)
         return id
     }
 
@@ -467,7 +707,7 @@ class TrackDAO {
     ) -> Int64 {
         let cacheKey = "\(title)|\(artistId ?? -1)"
 
-        if let cached = MediaScannerManager.shared.getCachedAlbum(cacheKey) {
+        if let cached = entityCache?.getCachedAlbum(cacheKey) {
             return cached
         }
 
@@ -475,7 +715,7 @@ class TrackDAO {
         let selectSql = "SELECT id FROM albums WHERE title = ? AND artist_id IS ?"
         let results = db.query(sql: selectSql, parameters: [title, artistId as Any])
         if let row = results.first, let id = row["id"] as? Int64 {
-            MediaScannerManager.shared.setCachedAlbum(cacheKey, id: id)
+            entityCache?.setCachedAlbum(cacheKey, id: id)
             return id
         }
 
@@ -494,7 +734,7 @@ class TrackDAO {
             genreName as Any,
             Date().timeIntervalSince1970
         ])
-        MediaScannerManager.shared.setCachedAlbum(cacheKey, id: id)
+        entityCache?.setCachedAlbum(cacheKey, id: id)
         return id
     }
 

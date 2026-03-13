@@ -23,6 +23,9 @@ struct MusicPlayerApp: App {
         // Initialize system media integration (media keys + Now Playing info)
         _ = SystemMediaIntegrationManager.shared
 
+        // Start remote control server if enabled
+        RemoteServerManager.shared.startIfEnabled()
+
         // Use overlay (thin, auto-hiding) scrollbars globally
         UserDefaults.standard.set("WhenScrolling", forKey: "AppleShowScrollBars")
     }
@@ -110,10 +113,15 @@ struct PlaybackCommands: Commands {
             }
             .keyboardShortcut("m", modifiers: [.command, .shift])
 
-            Button("Equalizer") {
-                EQWindowManager.shared.toggle()
+            Button("Audio Effects") {
+                AudioEffectsWindowManager.shared.toggle()
             }
             .keyboardShortcut("e", modifiers: [.command, .shift])
+
+            Button("Immersive Mode") {
+                ImmersiveWindowManager.shared.toggle()
+            }
+            .keyboardShortcut("f", modifiers: [.command, .shift])
         }
     }
 }

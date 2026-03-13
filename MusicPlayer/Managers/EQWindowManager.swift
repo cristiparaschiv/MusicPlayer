@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-class EQWindowManager {
-    static let shared = EQWindowManager()
+class AudioEffectsWindowManager {
+    static let shared = AudioEffectsWindowManager()
 
     private var window: NSPanel?
 
@@ -27,7 +27,7 @@ class EQWindowManager {
         }
 
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 300),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 380),
             styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel, .hudWindow],
             backing: .buffered,
             defer: false
@@ -35,7 +35,7 @@ class EQWindowManager {
 
         panel.isFloatingPanel = true
         panel.level = .floating
-        panel.title = "Equalizer"
+        panel.title = "Audio Effects"
         panel.titleVisibility = .visible
         panel.titlebarAppearsTransparent = true
         panel.isMovableByWindowBackground = false
@@ -43,12 +43,12 @@ class EQWindowManager {
         panel.isReleasedWhenClosed = false
         panel.animationBehavior = .utilityWindow
 
-        panel.contentView = NSHostingView(rootView: EQView())
+        panel.contentView = NSHostingView(rootView: AudioEffectsView())
 
         if let screen = NSScreen.main {
             let screenFrame = screen.visibleFrame
-            let x = screenFrame.midX - 240
-            let y = screenFrame.midY - 150
+            let x = screenFrame.midX - 260
+            let y = screenFrame.midY - 190
             panel.setFrameOrigin(NSPoint(x: x, y: y))
         }
 

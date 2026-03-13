@@ -369,10 +369,7 @@ class PlaylistManager {
                 return
             }
 
-            let tracks = self.playlistDAO.getTracksForPlaylist(playlistId: id)
-            for track in tracks {
-                self.playlistDAO.removeTrack(playlistId: id, trackId: track.id)
-            }
+            self.playlistDAO.clearPlaylist(playlistId: id)
 
             // Post notification
             DispatchQueue.main.async {
@@ -389,10 +386,13 @@ class PlaylistManager {
 
     // MARK: - Utility Methods
 
-    /// Check if a track exists in a playlist
+    /// Check if a track exists in a playlist (single SQL query)
     func isTrackInPlaylist(trackId: Int64, playlistId: Int64) -> Bool {
-        let tracks = playlistDAO.getTracksForPlaylist(playlistId: playlistId)
-        return tracks.contains(where: { $0.id == trackId })
+        let results = DatabaseManager.shared.query(
+            sql: "SELECT 1 FROM playlist_tracks WHERE playlist_id = ? AND track_id = ? LIMIT 1",
+            parameters: [playlistId, trackId]
+        )
+        return !results.isEmpty
     }
 
     /// Duplicate a playlist

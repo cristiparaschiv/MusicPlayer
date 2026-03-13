@@ -27,6 +27,7 @@ struct SettingsView: View {
     @State private var lastFMError: String?
     @State private var isConnectingLastFM: Bool = false
     @State private var showVerifySheet: Bool = false
+    @State private var showRemoteControl: Bool = false
 
     @ObservedObject private var audioOutputManager = AudioOutputManager.shared
     @ObservedObject private var scanner = MediaScannerManager.shared
@@ -34,56 +35,30 @@ struct SettingsView: View {
     @Environment(\.dismiss)
     var dismiss
     
-    enum SettingsTab: String, CaseIterable {
-        case general = "General"
-        case library = "Library"
-        case about = "About"
-
-        var icon: String {
-            switch self {
-            case .general: return Icons.settings
-            case .library: return Icons.customMusicNoteRectangleStack
-            case .about: return Icons.infoCircle
-            }
-        }
-
-        var selectedIcon: String {
-            switch self {
-            case .general: return Icons.settings
-            case .library: return Icons.customMusicNoteRectangleStack
-            case .about: return Icons.infoCircleFill
-            }
-        }
+    enum SettingsTab: Hashable {
+        case general
+        case playback
+        case library
+        case about
     }
     
     var body: some View {
-        VStack(spacing: 0) {
-            ZStack {
-                TabbedButtons(
-                    items: SettingsTab.allCases,
-                    selection: $selectedTab,
-                    style: tabbedButtonStyle,
-                    animation: .transform
-                )
-                .focusable(false)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 16)
-            .padding(.bottom, 10)
+        TabView(selection: $selectedTab) {
+            GeneralTabView
+                .tabItem { Label("General", systemImage: "gearshape") }
+                .tag(SettingsTab.general)
 
-            Divider()
+            PlaybackTabView
+                .tabItem { Label("Playback", systemImage: "play.circle") }
+                .tag(SettingsTab.playback)
 
-            Group {
-                switch selectedTab {
-                case .general:
-                    GeneralTabView
-                case .library:
-                    LibraryTabView
-                case .about:
-                    AboutTabView
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            LibraryTabView
+                .tabItem { Label("Library", systemImage: "music.note.house") }
+                .tag(SettingsTab.library)
+
+            AboutTabView
+                .tabItem { Label("About", systemImage: "info.circle") }
+                .tag(SettingsTab.about)
         }
         .frame(minWidth: 550, idealWidth: 600, maxWidth: 800,
                minHeight: 580, idealHeight: 650, maxHeight: 900)
@@ -216,6 +191,65 @@ struct SettingsView: View {
             .background(Color(nsColor: .controlBackgroundColor))
             .cornerRadius(8)
 
+            // Storage Section
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Storage")
+                    .font(.headline)
+                    .padding(.bottom, 4)
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Cache Size:")
+                            .font(.subheadline)
+
+                        Text("Artwork and lyrics cache")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
+                    Spacer()
+
+                    Text(cacheSize)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+
+                    Button(action: { showClearCacheAlert = true }) {
+                        if isClearingCache {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                                .frame(width: 80)
+                        } else {
+                            Text("Clear Cache")
+                                .frame(width: 80)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isClearingCache)
+                }
+            }
+            .padding()
+            .background(Color(nsColor: .controlBackgroundColor))
+            .cornerRadius(8)
+            .alert("Clear Cache", isPresented: $showClearCacheAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Clear", role: .destructive) {
+                    clearCache()
+                }
+            } message: {
+                Text("This will delete all cached artwork and lyrics. They will be re-downloaded when needed.")
+            }
+
+        }
+        .padding()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    // MARK: - Playback Tab
+
+    private var PlaybackTabView: some View {
+        ScrollView {
+        VStack(alignment: .leading, spacing: 20) {
             // Playback Settings Section
             VStack(alignment: .leading, spacing: 12) {
                 Text("Playback Settings")
@@ -307,54 +341,6 @@ struct SettingsView: View {
             .background(Color(nsColor: .controlBackgroundColor))
             .cornerRadius(8)
 
-            // Storage Section
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Storage")
-                    .font(.headline)
-                    .padding(.bottom, 4)
-
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Cache Size:")
-                            .font(.subheadline)
-
-                        Text("Artwork and lyrics cache")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-
-                    Spacer()
-
-                    Text(cacheSize)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-
-                    Button(action: { showClearCacheAlert = true }) {
-                        if isClearingCache {
-                            ProgressView()
-                                .scaleEffect(0.7)
-                                .frame(width: 80)
-                        } else {
-                            Text("Clear Cache")
-                                .frame(width: 80)
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(isClearingCache)
-                }
-            }
-            .padding()
-            .background(Color(nsColor: .controlBackgroundColor))
-            .cornerRadius(8)
-            .alert("Clear Cache", isPresented: $showClearCacheAlert) {
-                Button("Cancel", role: .cancel) { }
-                Button("Clear", role: .destructive) {
-                    clearCache()
-                }
-            } message: {
-                Text("This will delete all cached artwork and lyrics. They will be re-downloaded when needed.")
-            }
-
             // Last.fm Section
             VStack(alignment: .leading, spacing: 12) {
                 Text("Last.fm Scrobbling")
@@ -417,10 +403,33 @@ struct SettingsView: View {
             .background(Color(nsColor: .controlBackgroundColor))
             .cornerRadius(8)
 
+            // Remote Control Section
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Remote Control")
+                    .font(.headline)
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Control playback from any device on your network")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button("Configure...") {
+                        showRemoteControl = true
+                    }
+                }
+            }
+            .padding()
+            .background(Color(nsColor: .controlBackgroundColor))
+            .cornerRadius(8)
         }
         .padding()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .sheet(isPresented: $showRemoteControl) {
+            RemoteControlSettingsView()
+        }
     }
 
     private var LibraryTabView: some View {
@@ -661,11 +670,11 @@ struct SettingsView: View {
 
                 // Copyright
                 VStack(spacing: 8) {
-                    Text("© 2024-2025 Orange Music Player")
+                    Text("Created by Cristi Paraschiv")
                         .font(.caption)
                         .foregroundColor(.secondary)
 
-                    Text("All rights reserved")
+                    Text("© 2026 Orange Music Player. All rights reserved.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -688,14 +697,6 @@ struct SettingsView: View {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
     }
 
-    private var tabbedButtonStyle: TabbedButtonStyle {
-        if #available(macOS 26.0, *) {
-            return .moderncompact
-        } else {
-            return .compact
-        }
-    }
-    
     // MARK: - Actions
 
     private func loadData() {

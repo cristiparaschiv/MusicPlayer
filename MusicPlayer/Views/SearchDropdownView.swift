@@ -43,10 +43,10 @@ struct SearchDropdownView: View {
                         if !tracks.isEmpty {
                             sectionHeader("Tracks", icon: Icons.musicNote, count: searchManager.searchResults.tracks.count)
                             ForEach(tracks, id: \.id) { track in
-                                DropdownTrackRow(track: track)
-                                    .onTapGesture {
-                                        onTrackSelected(track)
-                                    }
+                                Button { onTrackSelected(track) } label: {
+                                    DropdownTrackRow(track: track)
+                                }
+                                .buttonStyle(.plain)
                             }
                         }
 
@@ -57,10 +57,10 @@ struct SearchDropdownView: View {
                             }
                             sectionHeader("Albums", icon: Icons.opticalDiscFill, count: searchManager.searchResults.albums.count)
                             ForEach(albums, id: \.id) { album in
-                                DropdownAlbumRow(album: album)
-                                    .onTapGesture {
-                                        onAlbumSelected(album)
-                                    }
+                                Button { onAlbumSelected(album) } label: {
+                                    DropdownAlbumRow(album: album)
+                                }
+                                .buttonStyle(.plain)
                             }
                         }
 
@@ -71,10 +71,10 @@ struct SearchDropdownView: View {
                             }
                             sectionHeader("Artists", icon: Icons.personFill, count: searchManager.searchResults.artists.count)
                             ForEach(artists, id: \.id) { artist in
-                                DropdownArtistRow(artist: artist)
-                                    .onTapGesture {
-                                        onArtistSelected(artist)
-                                    }
+                                Button { onArtistSelected(artist) } label: {
+                                    DropdownArtistRow(artist: artist)
+                                }
+                                .buttonStyle(.plain)
                             }
                         }
                     }

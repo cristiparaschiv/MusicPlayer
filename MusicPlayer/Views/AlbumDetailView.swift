@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct AlbumDetailView: View {
-    let album: Album
+    @State var album: Album
     @State private var artwork: NSImage?
     @State private var artist: Artist?
     @State private var addedToQueueMessage: String?
@@ -30,6 +30,19 @@ struct AlbumDetailView: View {
             loadArtwork()
             loadArtist()
         }
+        .onReceive(NotificationCenter.default.publisher(for: Constants.Notifications.trackMetadataChanged)) { _ in
+            // Reload album and artist in case they changed
+            if let updated = AlbumDAO().getById(id: album.id) {
+                album = updated
+            }
+            loadArtist()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Constants.Notifications.artworkDidChange)) { notification in
+            if let albumId = notification.userInfo?["albumId"] as? Int64, albumId == album.id {
+                artwork = nil
+                loadArtwork()
+            }
+        }
     }
 
     private var headerSection: some View {
@@ -55,6 +68,11 @@ struct AlbumDetailView: View {
                 .frame(width: 200, height: 200)
                 .cornerRadius(12)
                 .shadow(color: .black.opacity(0.3), radius: 12, x: 0, y: 6)
+                .contextMenu {
+                    Button("Choose Artwork...") {
+                        ArtworkPickerWindowManager.shared.show(for: album)
+                    }
+                }
 
                 VStack (alignment: .leading, spacing: 14) {
                     // Album title
@@ -142,6 +160,18 @@ struct AlbumDetailView: View {
                             .padding(.vertical, 10)
                         }
                         .buttonStyle(.bordered)
+
+                        Button(action: { playNext() }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "text.insert")
+                                    .font(.system(size: 14))
+                                Text("Play Next")
+                                    .font(.system(size: 14, weight: .semibold))
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 10)
+                        }
+                        .buttonStyle(.bordered)
                     }
                     .padding(.top, 8)
                 }
@@ -195,6 +225,17 @@ struct AlbumDetailView: View {
         guard !tracks.isEmpty else { return }
         QueueManager.shared.addToQueue(tracks)
         addedToQueueMessage = "\(tracks.count) track\(tracks.count == 1 ? "" : "s") added to queue"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            addedToQueueMessage = nil
+        }
+    }
+
+    private func playNext() {
+        let trackDAO = TrackDAO()
+        let tracks = trackDAO.getByAlbumId(albumId: album.id)
+        guard !tracks.isEmpty else { return }
+        QueueManager.shared.insertNext(tracks)
+        addedToQueueMessage = "\(tracks.count) track\(tracks.count == 1 ? "" : "s") will play next"
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             addedToQueueMessage = nil
         }

@@ -391,10 +391,6 @@ extension Sections: TabbedItem {
     var title: String { self.label }
 }
 
-extension SettingsView.SettingsTab: TabbedItem {
-    var title: String { self.rawValue }
-}
-
 struct WindowDragPreventer: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         NonDraggableView()

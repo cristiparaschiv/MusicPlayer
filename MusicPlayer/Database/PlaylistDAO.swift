@@ -99,12 +99,14 @@ class PlaylistDAO {
     }
 
     func reorderTracks(playlistId: Int64, trackIds: [Int64]) {
-        db.beginTransaction()
-        for (index, trackId) in trackIds.enumerated() {
-            let sql = "UPDATE playlist_tracks SET position = ? WHERE playlist_id = ? AND track_id = ?"
-            db.execute(sql: sql, parameters: [index, playlistId, trackId])
+        db.inTransaction { ctx in
+            for (index, trackId) in trackIds.enumerated() {
+                ctx.execute(
+                    sql: "UPDATE playlist_tracks SET position = ? WHERE playlist_id = ? AND track_id = ?",
+                    parameters: [index, playlistId, trackId]
+                )
+            }
         }
-        db.commitTransaction()
     }
 
     private func updateTrackCount(playlistId: Int64) {

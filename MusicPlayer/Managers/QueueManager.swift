@@ -1,48 +1,73 @@
 import Foundation
+import Combine
 
-class QueueManager {
+class QueueManager: ObservableObject {
     static let shared = QueueManager()
 
-    // MARK: - State
+    // MARK: - State (protected by queueLock)
 
-    private var queue: [Track] = []
-    private var currentIndex: Int = -1
-    private var originalQueue: [Track] = [] // For shuffle mode
+    private var _queue: [Track] = []
+    private var _currentIndex: Int = -1
+    private var _originalQueue: [Track] = []
     private static let maxShuffleHistory = 100
-    private var shuffleHistory: [Int] = [] // Track indices we've played in shuffle mode
+    private var shuffleHistory: [Int] = []
 
     private var _isShuffleEnabled: Bool = false
     private var _repeatMode: RepeatMode = .off
 
     private let queueLock = NSLock()
-    private let queueQueue = DispatchQueue(label: "com.orangemusicplayer.queue", qos: .userInitiated)
 
     private init() {
         loadPersistedState()
     }
 
-    // MARK: - Public Properties
+    // MARK: - Published Properties (updated on main thread)
+
+    /// Call after any state mutation under lock to sync published state to main thread.
+    private func publishState() {
+        let q = _queue
+        let idx = _currentIndex
+        let shuffle = _isShuffleEnabled
+        let rpt = _repeatMode
+        let publish = { [weak self] in
+            guard let self = self else { return }
+            self.objectWillChange.send()
+            self._publishedQueue = q
+            self._publishedCurrentIndex = idx
+            self._publishedIsShuffleEnabled = shuffle
+            self._publishedRepeatMode = rpt
+        }
+        if Thread.isMainThread {
+            publish()
+        } else {
+            DispatchQueue.main.async(execute: publish)
+        }
+    }
+
+    @Published private(set) var _publishedQueue: [Track] = []
+    @Published private(set) var _publishedCurrentIndex: Int = -1
+    @Published private(set) var _publishedIsShuffleEnabled: Bool = false
+    @Published private(set) var _publishedRepeatMode: RepeatMode = .off
+
+    // MARK: - Public Properties (thread-safe reads)
 
     var currentTrack: Track? {
         queueLock.lock()
         defer { queueLock.unlock() }
-
-        guard currentIndex >= 0 && currentIndex < queue.count else {
-            return nil
-        }
-        return queue[currentIndex]
+        guard _currentIndex >= 0 && _currentIndex < _queue.count else { return nil }
+        return _queue[_currentIndex]
     }
 
     var currentQueue: [Track] {
         queueLock.lock()
         defer { queueLock.unlock() }
-        return queue
+        return _queue
     }
 
     var currentTrackIndex: Int {
         queueLock.lock()
         defer { queueLock.unlock() }
-        return currentIndex
+        return _currentIndex
     }
 
     var isShuffleEnabled: Bool {
@@ -60,300 +85,247 @@ class QueueManager {
     var queueCount: Int {
         queueLock.lock()
         defer { queueLock.unlock() }
-        return queue.count
+        return _queue.count
     }
 
     var isEmpty: Bool {
         queueLock.lock()
         defer { queueLock.unlock() }
-        return queue.isEmpty
+        return _queue.isEmpty
     }
 
     var hasNext: Bool {
         queueLock.lock()
         defer { queueLock.unlock() }
-
-        if _repeatMode == .one {
-            return true
-        }
-
-        if _repeatMode == .all && !queue.isEmpty {
-            return true
-        }
-
-        return currentIndex < queue.count - 1
+        if _repeatMode == .one { return true }
+        if _repeatMode == .all && !_queue.isEmpty { return true }
+        return _currentIndex < _queue.count - 1
     }
 
     var hasPrevious: Bool {
         queueLock.lock()
         defer { queueLock.unlock() }
-
-        if _repeatMode == .one {
-            return true
-        }
-
-        if _isShuffleEnabled && !shuffleHistory.isEmpty {
-            return true
-        }
-
-        return currentIndex > 0
+        if _repeatMode == .one { return true }
+        if _isShuffleEnabled && !shuffleHistory.isEmpty { return true }
+        return _currentIndex > 0
     }
 
     // MARK: - Queue Management
 
-    /// Set the entire queue and start from a specific track
     func setQueue(_ tracks: [Track], startIndex: Int = 0) {
-        queueQueue.async { [weak self] in
-            guard let self = self else { return }
+        queueLock.lock()
+        _queue = tracks
+        _currentIndex = min(max(0, startIndex), tracks.count - 1)
+        _originalQueue = tracks
+        shuffleHistory = []
 
-            self.queueLock.lock()
-            self.queue = tracks
-            self.currentIndex = min(max(0, startIndex), tracks.count - 1)
-            self.originalQueue = tracks
-            self.shuffleHistory = []
-
-            // Apply shuffle if it's enabled
-            if self._isShuffleEnabled && !tracks.isEmpty {
-                self.applyShuffleKeepingCurrentTrack()
-            }
-            self.queueLock.unlock()
-
-            self.persistState()
-            self.notifyQueueChanged()
-            self.notifyCurrentTrackChanged()
+        if _isShuffleEnabled && !tracks.isEmpty {
+            applyShuffleKeepingCurrentTrack()
         }
+        queueLock.unlock()
+
+        publishState()
+        debouncePersist()
+        notifyQueueChanged()
+        notifyCurrentTrackChanged()
     }
 
-    /// Add tracks to the end of the queue
     func addToQueue(_ tracks: [Track]) {
-        queueQueue.async { [weak self] in
-            guard let self = self else { return }
+        queueLock.lock()
 
-            self.queueLock.lock()
+        if _isShuffleEnabled {
+            _originalQueue.append(contentsOf: tracks)
+            var shuffled = tracks
+            shuffled.shuffle()
+            _queue.append(contentsOf: shuffled)
+        } else {
+            _queue.append(contentsOf: tracks)
+            _originalQueue.append(contentsOf: tracks)
+        }
 
-            if self._isShuffleEnabled {
-                // Add to original queue
-                self.originalQueue.append(contentsOf: tracks)
+        if _currentIndex == -1 && !_queue.isEmpty {
+            _currentIndex = 0
+        }
 
-                // Shuffle and add to current queue
-                var shuffledTracks = tracks
-                shuffledTracks.shuffle()
-                self.queue.append(contentsOf: shuffledTracks)
-            } else {
-                self.queue.append(contentsOf: tracks)
-                self.originalQueue.append(contentsOf: tracks)
-            }
+        let shouldNotifyTrack = _currentIndex == 0 && !tracks.isEmpty
+        queueLock.unlock()
 
-            // If queue was empty, set current index to 0
-            if self.currentIndex == -1 && !self.queue.isEmpty {
-                self.currentIndex = 0
-            }
+        publishState()
+        debouncePersist()
+        notifyQueueChanged()
 
-            self.queueLock.unlock()
-
-            self.persistState()
-            self.notifyQueueChanged()
-
-            // Notify current track if we just added the first track
-            if self.currentIndex == 0 && tracks.count > 0 {
-                self.notifyCurrentTrackChanged()
-            }
+        if shouldNotifyTrack {
+            notifyCurrentTrackChanged()
         }
     }
 
-    /// Insert tracks immediately after the current track (play next)
     func insertNext(_ tracks: [Track]) {
-        queueQueue.async { [weak self] in
-            guard let self = self else { return }
+        queueLock.lock()
 
-            self.queueLock.lock()
+        let insertIndex = _currentIndex + 1
 
-            let insertIndex = self.currentIndex + 1
-
-            if self._isShuffleEnabled {
-                // Insert into original queue at the end
-                self.originalQueue.append(contentsOf: tracks)
-
-                // Insert into shuffled queue right after current
-                if insertIndex <= self.queue.count {
-                    self.queue.insert(contentsOf: tracks, at: insertIndex)
-                } else {
-                    self.queue.append(contentsOf: tracks)
-                }
+        if _isShuffleEnabled {
+            _originalQueue.append(contentsOf: tracks)
+            if insertIndex <= _queue.count {
+                _queue.insert(contentsOf: tracks, at: insertIndex)
             } else {
-                if insertIndex <= self.queue.count {
-                    self.queue.insert(contentsOf: tracks, at: insertIndex)
-                    self.originalQueue.insert(contentsOf: tracks, at: insertIndex)
-                } else {
-                    self.queue.append(contentsOf: tracks)
-                    self.originalQueue.append(contentsOf: tracks)
-                }
+                _queue.append(contentsOf: tracks)
             }
-
-            self.queueLock.unlock()
-
-            self.persistState()
-            self.notifyQueueChanged()
+        } else {
+            if insertIndex <= _queue.count {
+                _queue.insert(contentsOf: tracks, at: insertIndex)
+                _originalQueue.insert(contentsOf: tracks, at: insertIndex)
+            } else {
+                _queue.append(contentsOf: tracks)
+                _originalQueue.append(contentsOf: tracks)
+            }
         }
+
+        queueLock.unlock()
+
+        publishState()
+        debouncePersist()
+        notifyQueueChanged()
     }
 
-    /// Remove a track from the queue
     func removeTrack(at index: Int) {
-        queueQueue.async { [weak self] in
-            guard let self = self else { return }
+        queueLock.lock()
 
-            self.queueLock.lock()
+        guard index >= 0 && index < _queue.count else {
+            queueLock.unlock()
+            return
+        }
 
-            guard index >= 0 && index < self.queue.count else {
-                self.queueLock.unlock()
-                return
+        let wasCurrentTrack = (index == _currentIndex)
+
+        let removedTrack = _queue[index]
+        if let originalIndex = _originalQueue.firstIndex(where: { $0.id == removedTrack.id }) {
+            _originalQueue.remove(at: originalIndex)
+        }
+
+        _queue.remove(at: index)
+
+        if index < _currentIndex {
+            _currentIndex -= 1
+        } else if wasCurrentTrack {
+            if _currentIndex >= _queue.count {
+                _currentIndex = _queue.count - 1
             }
+        }
 
-            self.queue.remove(at: index)
+        if _queue.isEmpty {
+            _currentIndex = -1
+            _originalQueue = []
+            shuffleHistory = []
+        }
 
-            // Adjust current index if needed
-            if index < self.currentIndex {
-                self.currentIndex -= 1
-            } else if index == self.currentIndex {
-                // Removed current track, stay at same index (which is now the next track)
-                if self.currentIndex >= self.queue.count {
-                    self.currentIndex = self.queue.count - 1
-                }
-            }
+        queueLock.unlock()
 
-            // Clean up if queue is empty
-            if self.queue.isEmpty {
-                self.currentIndex = -1
-                self.originalQueue = []
-                self.shuffleHistory = []
-            }
+        publishState()
+        debouncePersist()
+        notifyQueueChanged()
 
-            let wasCurrentTrack = (index == self.currentIndex)
-
-            self.queueLock.unlock()
-
-            self.persistState()
-            self.notifyQueueChanged()
-
-            if wasCurrentTrack {
-                self.notifyCurrentTrackChanged()
-            }
+        if wasCurrentTrack {
+            notifyCurrentTrackChanged()
         }
     }
 
-    /// Move a track from one position to another
     func moveTrack(from sourceIndex: Int, to destinationIndex: Int) {
-        queueQueue.async { [weak self] in
-            guard let self = self else { return }
+        queueLock.lock()
 
-            self.queueLock.lock()
-
-            guard sourceIndex >= 0 && sourceIndex < self.queue.count &&
-                  destinationIndex >= 0 && destinationIndex < self.queue.count &&
-                  sourceIndex != destinationIndex else {
-                self.queueLock.unlock()
-                return
-            }
-
-            let track = self.queue.remove(at: sourceIndex)
-            self.queue.insert(track, at: destinationIndex)
-
-            // Adjust current index
-            if sourceIndex == self.currentIndex {
-                self.currentIndex = destinationIndex
-            } else if sourceIndex < self.currentIndex && destinationIndex >= self.currentIndex {
-                self.currentIndex -= 1
-            } else if sourceIndex > self.currentIndex && destinationIndex <= self.currentIndex {
-                self.currentIndex += 1
-            }
-
-            self.queueLock.unlock()
-
-            self.persistState()
-            self.notifyQueueChanged()
+        guard sourceIndex >= 0 && sourceIndex < _queue.count &&
+              destinationIndex >= 0 && destinationIndex < _queue.count &&
+              sourceIndex != destinationIndex else {
+            queueLock.unlock()
+            return
         }
+
+        let track = _queue.remove(at: sourceIndex)
+        _queue.insert(track, at: destinationIndex)
+
+        if sourceIndex == _currentIndex {
+            _currentIndex = destinationIndex
+        } else if sourceIndex < _currentIndex && destinationIndex >= _currentIndex {
+            _currentIndex -= 1
+        } else if sourceIndex > _currentIndex && destinationIndex <= _currentIndex {
+            _currentIndex += 1
+        }
+
+        queueLock.unlock()
+
+        publishState()
+        debouncePersist()
+        notifyQueueChanged()
     }
 
-    /// Clear the entire queue
     func clearQueue() {
-        queueQueue.async { [weak self] in
-            guard let self = self else { return }
+        queueLock.lock()
+        _queue = []
+        _currentIndex = -1
+        _originalQueue = []
+        shuffleHistory = []
+        queueLock.unlock()
 
-            self.queueLock.lock()
-            self.queue = []
-            self.currentIndex = -1
-            self.originalQueue = []
-            self.shuffleHistory = []
-            self.queueLock.unlock()
-
-            self.persistState()
-            self.notifyQueueChanged()
-            self.notifyCurrentTrackChanged()
-        }
+        publishState()
+        debouncePersist()
+        notifyQueueChanged()
+        notifyCurrentTrackChanged()
     }
 
     // MARK: - Navigation
 
-    /// Get the next track without advancing the queue
     func peekNext() -> Track? {
         queueLock.lock()
         defer { queueLock.unlock() }
 
-        if _repeatMode == .one, currentIndex >= 0, currentIndex < queue.count {
-            return queue[currentIndex]
+        if _repeatMode == .one, _currentIndex >= 0, _currentIndex < _queue.count {
+            return _queue[_currentIndex]
         }
 
-        let nextIndex = currentIndex + 1
-
-        if nextIndex < queue.count {
-            return queue[nextIndex]
-        }
-
-        if _repeatMode == .all && !queue.isEmpty {
-            return queue[0]
-        }
-
+        let nextIndex = _currentIndex + 1
+        if nextIndex < _queue.count { return _queue[nextIndex] }
+        if _repeatMode == .all && !_queue.isEmpty { return _queue[0] }
         return nil
     }
 
-    /// Advance to the next track
     func next() -> Track? {
         queueLock.lock()
 
         if _repeatMode == .one {
-            let track = (currentIndex >= 0 && currentIndex < queue.count) ? queue[currentIndex] : nil
+            let track = (_currentIndex >= 0 && _currentIndex < _queue.count) ? _queue[_currentIndex] : nil
             queueLock.unlock()
+            publishState()
             notifyCurrentTrackChanged()
             return track
         }
 
-        let nextIndex = currentIndex + 1
+        let nextIndex = _currentIndex + 1
 
-        if nextIndex < queue.count {
-            currentIndex = nextIndex
+        if nextIndex < _queue.count {
+            _currentIndex = nextIndex
             if _isShuffleEnabled {
-                shuffleHistory.append(currentIndex)
+                shuffleHistory.append(_currentIndex)
                 if shuffleHistory.count > Self.maxShuffleHistory {
                     shuffleHistory.removeFirst(shuffleHistory.count - Self.maxShuffleHistory)
                 }
             }
-            let track = queue[currentIndex]
+            let track = _queue[_currentIndex]
             queueLock.unlock()
 
-            persistState()
+            publishState()
+            debouncePersist()
             notifyCurrentTrackChanged()
             return track
         }
 
-        if _repeatMode == .all && !queue.isEmpty {
-            currentIndex = 0
-            if _isShuffleEnabled {
-                shuffleHistory = [0]
-            }
-            let track = queue[0]
+        if _repeatMode == .all && !_queue.isEmpty {
+            _currentIndex = 0
+            if _isShuffleEnabled { shuffleHistory = [0] }
+            let track = _queue[0]
             queueLock.unlock()
 
-            persistState()
+            publishState()
+            debouncePersist()
             notifyCurrentTrackChanged()
             return track
         }
@@ -362,47 +334,49 @@ class QueueManager {
         return nil
     }
 
-    /// Go to the previous track
     func previous() -> Track? {
         queueLock.lock()
 
         if _repeatMode == .one {
-            let track = (currentIndex >= 0 && currentIndex < queue.count) ? queue[currentIndex] : nil
+            let track = (_currentIndex >= 0 && _currentIndex < _queue.count) ? _queue[_currentIndex] : nil
             queueLock.unlock()
+            publishState()
             notifyCurrentTrackChanged()
             return track
         }
 
         if _isShuffleEnabled && shuffleHistory.count > 1 {
-            // Remove current from history and go to previous
             shuffleHistory.removeLast()
-            currentIndex = shuffleHistory.last ?? 0
-            let track = queue[currentIndex]
+            _currentIndex = shuffleHistory.last ?? 0
+            let track = _queue[_currentIndex]
             queueLock.unlock()
 
-            persistState()
+            publishState()
+            debouncePersist()
             notifyCurrentTrackChanged()
             return track
         }
 
-        let previousIndex = currentIndex - 1
+        let previousIndex = _currentIndex - 1
 
         if previousIndex >= 0 {
-            currentIndex = previousIndex
-            let track = queue[currentIndex]
+            _currentIndex = previousIndex
+            let track = _queue[_currentIndex]
             queueLock.unlock()
 
-            persistState()
+            publishState()
+            debouncePersist()
             notifyCurrentTrackChanged()
             return track
         }
 
-        if _repeatMode == .all && !queue.isEmpty {
-            currentIndex = queue.count - 1
-            let track = queue[currentIndex]
+        if _repeatMode == .all && !_queue.isEmpty {
+            _currentIndex = _queue.count - 1
+            let track = _queue[_currentIndex]
             queueLock.unlock()
 
-            persistState()
+            publishState()
+            debouncePersist()
             notifyCurrentTrackChanged()
             return track
         }
@@ -411,16 +385,15 @@ class QueueManager {
         return nil
     }
 
-    /// Jump to a specific track in the queue
     func skipToTrack(at index: Int) -> Track? {
         queueLock.lock()
 
-        guard index >= 0 && index < queue.count else {
+        guard index >= 0 && index < _queue.count else {
             queueLock.unlock()
             return nil
         }
 
-        currentIndex = index
+        _currentIndex = index
 
         if _isShuffleEnabled {
             shuffleHistory.append(index)
@@ -429,174 +402,140 @@ class QueueManager {
             }
         }
 
-        let track = queue[index]
+        let track = _queue[index]
         queueLock.unlock()
 
-        persistState()
+        publishState()
+        debouncePersist()
         notifyCurrentTrackChanged()
         return track
     }
 
     // MARK: - Shuffle & Repeat
 
-    /// Toggle shuffle mode
     func toggleShuffle() {
         setShuffleEnabled(!isShuffleEnabled)
     }
 
-    /// Set shuffle mode
     func setShuffleEnabled(_ enabled: Bool) {
-        queueQueue.async { [weak self] in
-            guard let self = self else { return }
+        queueLock.lock()
 
-            self.queueLock.lock()
-
-            guard self._isShuffleEnabled != enabled else {
-                self.queueLock.unlock()
-                return
-            }
-
-            self._isShuffleEnabled = enabled
-
-            if enabled {
-                // Enabling shuffle
-                if !self.queue.isEmpty {
-                    self.applyShuffleKeepingCurrentTrack()
-                }
-            } else {
-                // Disabling shuffle - restore original queue
-                if !self.originalQueue.isEmpty {
-                    let currentTrack = self.queue.count > self.currentIndex && self.currentIndex >= 0
-                        ? self.queue[self.currentIndex]
-                        : nil
-
-                    self.queue = self.originalQueue
-
-                    // Find current track in original queue
-                    if let track = currentTrack,
-                       let newIndex = self.queue.firstIndex(where: { $0.id == track.id }) {
-                        self.currentIndex = newIndex
-                    } else {
-                        self.currentIndex = 0
-                    }
-                }
-                self.shuffleHistory = []
-            }
-
-            self.queueLock.unlock()
-
-            self.persistState()
-            self.notifyQueueChanged()
-            self.notifyCurrentTrackChanged()
-            self.notifyShuffleModeChanged()
+        guard _isShuffleEnabled != enabled else {
+            queueLock.unlock()
+            return
         }
+
+        _isShuffleEnabled = enabled
+
+        if enabled {
+            if !_queue.isEmpty {
+                applyShuffleKeepingCurrentTrack()
+            }
+        } else {
+            if !_originalQueue.isEmpty {
+                let currentTrackObj = (_currentIndex >= 0 && _currentIndex < _queue.count)
+                    ? _queue[_currentIndex]
+                    : nil
+
+                _queue = _originalQueue
+
+                if let track = currentTrackObj,
+                   let newIndex = _queue.firstIndex(where: { $0.id == track.id }) {
+                    _currentIndex = newIndex
+                } else {
+                    _currentIndex = 0
+                }
+            }
+            shuffleHistory = []
+        }
+
+        queueLock.unlock()
+
+        publishState()
+        debouncePersist()
+        notifyQueueChanged()
+        notifyCurrentTrackChanged()
+        notifyShuffleModeChanged()
     }
 
-    /// Set repeat mode
     func setRepeatMode(_ mode: RepeatMode) {
-        queueQueue.async { [weak self] in
-            guard let self = self else { return }
+        queueLock.lock()
+        _repeatMode = mode
+        queueLock.unlock()
 
-            self.queueLock.lock()
-            self._repeatMode = mode
-            self.queueLock.unlock()
+        publishState()
+        debouncePersist()
 
-            self.persistState()
-
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(
-                    name: Constants.Notifications.repeatModeChanged,
-                    object: nil,
-                    userInfo: ["repeatMode": mode.rawValue]
-                )
-            }
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: Constants.Notifications.repeatModeChanged,
+                object: nil,
+                userInfo: ["repeatMode": mode.rawValue]
+            )
         }
     }
 
-    /// Cycle through repeat modes (off -> all -> one -> off)
     func cycleRepeatMode() {
         let currentMode = repeatMode
         let nextMode: RepeatMode
-
         switch currentMode {
-        case .off:
-            nextMode = .all
-        case .all:
-            nextMode = .one
-        case .one:
-            nextMode = .off
+        case .off: nextMode = .all
+        case .all: nextMode = .one
+        case .one: nextMode = .off
         }
-
         setRepeatMode(nextMode)
     }
 
     // MARK: - Utility Methods
 
-    /// Get the index of a track in the queue
     func indexOfTrack(_ track: Track) -> Int? {
         queueLock.lock()
         defer { queueLock.unlock() }
-
-        return queue.firstIndex(where: { $0.id == track.id })
+        return _queue.firstIndex(where: { $0.id == track.id })
     }
 
-    /// Check if a track is in the queue
     func containsTrack(_ track: Track) -> Bool {
         return indexOfTrack(track) != nil
     }
 
-    /// Get tracks remaining in queue (from current position onwards)
     func remainingTracks() -> [Track] {
         queueLock.lock()
         defer { queueLock.unlock() }
-
-        guard currentIndex >= 0 && currentIndex < queue.count else {
-            return []
-        }
-
-        return Array(queue[currentIndex...])
+        guard _currentIndex >= 0 && _currentIndex < _queue.count else { return [] }
+        return Array(_queue[_currentIndex...])
     }
 
-    /// Get upcoming tracks (excluding current)
     func upcomingTracks(limit: Int? = nil) -> [Track] {
         queueLock.lock()
         defer { queueLock.unlock() }
-
-        let startIndex = currentIndex + 1
-
-        guard startIndex < queue.count else {
-            return []
-        }
-
+        let startIndex = _currentIndex + 1
+        guard startIndex < _queue.count else { return [] }
         if let limit = limit {
-            let endIndex = min(startIndex + limit, queue.count)
-            return Array(queue[startIndex..<endIndex])
+            let endIndex = min(startIndex + limit, _queue.count)
+            return Array(_queue[startIndex..<endIndex])
         }
-
-        return Array(queue[startIndex...])
+        return Array(_queue[startIndex...])
     }
 
     // MARK: - Private Methods
 
     private func applyShuffleKeepingCurrentTrack() {
         // Must be called within lock
-        guard !queue.isEmpty else { return }
+        guard !_queue.isEmpty else { return }
 
-        let currentTrack = currentIndex >= 0 && currentIndex < queue.count
-            ? queue[currentIndex]
+        let currentTrackObj = (_currentIndex >= 0 && _currentIndex < _queue.count)
+            ? _queue[_currentIndex]
             : nil
 
-        // Shuffle the queue
-        queue.shuffle()
+        _queue.shuffle()
 
-        // Move current track to the front if it exists
-        if let track = currentTrack,
-           let shuffledIndex = queue.firstIndex(where: { $0.id == track.id }) {
-            queue.swapAt(0, shuffledIndex)
-            currentIndex = 0
+        if let track = currentTrackObj,
+           let shuffledIndex = _queue.firstIndex(where: { $0.id == track.id }) {
+            _queue.swapAt(0, shuffledIndex)
+            _currentIndex = 0
             shuffleHistory = [0]
         } else {
-            currentIndex = 0
+            _currentIndex = 0
             shuffleHistory = [0]
         }
     }
@@ -611,21 +550,29 @@ class QueueManager {
     }
 
     private func notifyCurrentTrackChanged() {
+        queueLock.lock()
+        let index = _currentIndex
+        queueLock.unlock()
+
         DispatchQueue.main.async {
             NotificationCenter.default.post(
                 name: Constants.Notifications.trackDidChange,
                 object: nil,
-                userInfo: ["trackIndex": self.currentIndex]
+                userInfo: ["trackIndex": index]
             )
         }
     }
 
     private func notifyShuffleModeChanged() {
+        queueLock.lock()
+        let shuffleEnabled = _isShuffleEnabled
+        queueLock.unlock()
+
         DispatchQueue.main.async {
             NotificationCenter.default.post(
                 name: Constants.Notifications.shuffleModeChanged,
                 object: nil,
-                userInfo: ["shuffleEnabled": self._isShuffleEnabled]
+                userInfo: ["shuffleEnabled": shuffleEnabled]
             )
         }
     }
@@ -634,17 +581,17 @@ class QueueManager {
 
     private var persistWorkItem: DispatchWorkItem?
 
-    private func persistState() {
+    private func debouncePersist() {
         persistWorkItem?.cancel()
-        let item = DispatchWorkItem { [weak self] in
-            guard let self = self else { return }
-            self.queueLock.lock()
-            let shuffle = self._isShuffleEnabled
-            let repeatRaw = self._repeatMode.rawValue
-            let trackIDs = self.queue.map { $0.id }
-            let index = self.currentIndex
-            self.queueLock.unlock()
 
+        queueLock.lock()
+        let shuffle = _isShuffleEnabled
+        let repeatRaw = _repeatMode.rawValue
+        let trackIDs = _queue.map { $0.id }
+        let index = _currentIndex
+        queueLock.unlock()
+
+        let item = DispatchWorkItem {
             UserDefaults.standard.set(shuffle, forKey: Constants.UserDefaultsKeys.shuffleEnabled)
             UserDefaults.standard.set(repeatRaw, forKey: Constants.UserDefaultsKeys.repeatMode)
             UserDefaults.standard.set(trackIDs, forKey: Constants.UserDefaultsKeys.queueTrackIDs)
@@ -662,19 +609,24 @@ class QueueManager {
             _repeatMode = mode
         }
 
-        // Restore queue from persisted track IDs
         if let savedIDs = UserDefaults.standard.array(forKey: Constants.UserDefaultsKeys.queueTrackIDs) as? [Int64],
            !savedIDs.isEmpty {
             let trackDAO = TrackDAO()
             let restoredTracks = savedIDs.compactMap { trackDAO.getById(id: $0) }
             if !restoredTracks.isEmpty {
-                queue = restoredTracks
-                originalQueue = restoredTracks
-                currentIndex = UserDefaults.standard.integer(forKey: Constants.UserDefaultsKeys.queueCurrentIndex)
-                // Clamp index to valid range
-                if currentIndex < 0 || currentIndex >= queue.count {
-                    currentIndex = 0
+                _queue = restoredTracks
+                _originalQueue = restoredTracks
+                _currentIndex = UserDefaults.standard.integer(forKey: Constants.UserDefaultsKeys.queueCurrentIndex)
+                if _currentIndex < 0 || _currentIndex >= _queue.count {
+                    _currentIndex = 0
                 }
+
+                // Sync published state
+                _publishedQueue = _queue
+                _publishedCurrentIndex = _currentIndex
+                _publishedIsShuffleEnabled = _isShuffleEnabled
+                _publishedRepeatMode = _repeatMode
+
                 notifyQueueChanged()
                 notifyCurrentTrackChanged()
             }
@@ -691,12 +643,9 @@ enum RepeatMode: String, Codable {
 
     var displayName: String {
         switch self {
-        case .off:
-            return "Off"
-        case .one:
-            return "Repeat One"
-        case .all:
-            return "Repeat All"
+        case .off: return "Off"
+        case .one: return "Repeat One"
+        case .all: return "Repeat All"
         }
     }
 }

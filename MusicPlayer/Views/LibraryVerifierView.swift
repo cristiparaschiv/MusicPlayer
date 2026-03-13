@@ -3,6 +3,7 @@ import SwiftUI
 struct LibraryVerifierView: View {
     @StateObject private var verifier = LibraryVerifier()
     @Environment(\.dismiss) var dismiss
+    @State private var showRemoveAllConfirmation = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -56,10 +57,18 @@ struct LibraryVerifierView: View {
                             .foregroundColor(.orange)
                         Spacer()
                         Button("Remove All Damaged") {
-                            verifier.removeAllDamaged()
+                            showRemoveAllConfirmation = true
                         }
                         .buttonStyle(.bordered)
                         .foregroundColor(.red)
+                        .alert("Remove All Damaged Tracks?", isPresented: $showRemoveAllConfirmation) {
+                            Button("Cancel", role: .cancel) {}
+                            Button("Remove \(verifier.results.count) Tracks", role: .destructive) {
+                                verifier.removeAllDamaged()
+                            }
+                        } message: {
+                            Text("This will remove \(verifier.results.count) damaged tracks from your library. This cannot be undone.")
+                        }
                     }
                     .padding(.horizontal)
                     .padding(.top, 8)

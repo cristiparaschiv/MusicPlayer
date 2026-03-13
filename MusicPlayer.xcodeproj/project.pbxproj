@@ -7,10 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		96A409962F62B71900E879FE /* Accelerate.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 96A409952F62B71900E879FE /* Accelerate.framework */; };
+		96A409982F62B72900E879FE /* libc++.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 96A409972F62B72900E879FE /* libc++.tbd */; };
 		96AA83402EE07A3200226186 /* SFBAudioEngine in Frameworks */ = {isa = PBXBuildFile; productRef = 96AA833F2EE07A3200226186 /* SFBAudioEngine */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		96A409952F62B71900E879FE /* Accelerate.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Accelerate.framework; path = System/Library/Frameworks/Accelerate.framework; sourceTree = SDKROOT; };
+		96A409972F62B72900E879FE /* libc++.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = "libc++.tbd"; path = "usr/lib/libc++.tbd"; sourceTree = SDKROOT; };
 		96AA82A32EE0382A00226186 /* Orange Music Player.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Orange Music Player.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -27,6 +31,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				96A409982F62B72900E879FE /* libc++.tbd in Frameworks */,
+				96A409962F62B71900E879FE /* Accelerate.framework in Frameworks */,
 				96AA83402EE07A3200226186 /* SFBAudioEngine in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -34,10 +40,20 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		96A409942F62B71900E879FE /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				96A409972F62B72900E879FE /* libc++.tbd */,
+				96A409952F62B71900E879FE /* Accelerate.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		96AA829A2EE0382900226186 = {
 			isa = PBXGroup;
 			children = (
 				96AA82A52EE0382A00226186 /* MusicPlayer */,
+				96A409942F62B71900E879FE /* Frameworks */,
 				96AA82A42EE0382A00226186 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -273,10 +289,15 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Orange Music Player";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2024-2025 Orange Music Player. All rights reserved.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026 Cristi Paraschiv. All rights reserved.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Orange Music Player uses the local network to allow remote control from other devices on your network.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/MusicPlayer/Resources",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
@@ -288,6 +309,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				"SWIFT_OBJC_BRIDGING_HEADER[arch=*]" = "MusicPlayer/MusicPlayer-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 			};
@@ -312,10 +334,15 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Orange Music Player";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2024-2025 Orange Music Player. All rights reserved.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026 Cristi Paraschiv. All rights reserved.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Orange Music Player uses the local network to allow remote control from other devices on your network.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/MusicPlayer/Resources",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
@@ -327,6 +354,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				"SWIFT_OBJC_BRIDGING_HEADER[arch=*]" = "MusicPlayer/MusicPlayer-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 			};

@@ -21,7 +21,7 @@ struct LibraryPathStatus: Identifiable {
     }
 }
 
-class MediaScannerManager: ObservableObject {
+class MediaScannerManager: ObservableObject, EntityCacheProvider {
     static let shared = MediaScannerManager()
 
     private let trackDAO = TrackDAO()
@@ -47,6 +47,7 @@ class MediaScannerManager: ObservableObject {
     ]
 
     private init() {
+        trackDAO.entityCache = self
         setupFileSystemMonitoring()
         refreshPathStatuses()
     }
@@ -133,15 +134,15 @@ class MediaScannerManager: ObservableObject {
         // Delete all existing tracks, albums, and artists
         let db = DatabaseManager.shared
 
-        db.beginTransaction()
-        db.execute(sql: "DELETE FROM playlist_tracks")
-        db.execute(sql: "DELETE FROM tracks")
-        db.execute(sql: "DELETE FROM albums")
-        db.execute(sql: "DELETE FROM artists")
-        db.execute(sql: "DELETE FROM genres")
-        db.execute(sql: "DELETE FROM composers")
-        db.execute(sql: "UPDATE library_paths SET last_scanned = NULL")
-        db.commitTransaction()
+        db.inTransaction { ctx in
+            ctx.execute(sql: "DELETE FROM playlist_tracks")
+            ctx.execute(sql: "DELETE FROM tracks")
+            ctx.execute(sql: "DELETE FROM albums")
+            ctx.execute(sql: "DELETE FROM artists")
+            ctx.execute(sql: "DELETE FROM genres")
+            ctx.execute(sql: "DELETE FROM composers")
+            ctx.execute(sql: "UPDATE library_paths SET last_scanned = NULL")
+        }
 
         // Trigger scan for all paths
         scanForChanges()

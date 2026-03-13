@@ -1,16 +1,22 @@
 import Foundation
 import AppKit
+import Security
 
 class SecurityBookmarkManager {
     static let shared = SecurityBookmarkManager()
 
     private let bookmarksKey = "SecurityScopedBookmarks"
+    private let keychainService = "com.orangemusicplayer.bookmarks"
+    private let keychainAccount = "security-scoped-bookmarks"
+    private let keychainMigrationKey = "BookmarkMigratedToKeychain_v1"
     private var activeBookmarks: [URL: URL] = [:] // Original URL -> Security-scoped URL
     private let lock = NSLock()
+    private let storageLock = NSLock() // Protects load-modify-save sequences
 
     private let bookmarkMigrationKey = "BookmarkMigratedToReadWrite_v2"
 
     private init() {
+        migrateToKeychainIfNeeded()
         resolveAllBookmarks()
     }
 
@@ -83,10 +89,12 @@ class SecurityBookmarkManager {
                 relativeTo: nil
             )
 
-            // Save to UserDefaults
+            // Save to UserDefaults (atomic load-modify-save)
+            storageLock.lock()
             var bookmarks = loadBookmarks()
             bookmarks[url.path] = bookmarkData
             saveBookmarks(bookmarks)
+            storageLock.unlock()
 
             // Start accessing immediately
             if url.startAccessingSecurityScopedResource() {
@@ -115,10 +123,12 @@ class SecurityBookmarkManager {
         }
         lock.unlock()
 
-        // Remove from storage
+        // Remove from storage (atomic load-modify-save)
+        storageLock.lock()
         var bookmarks = loadBookmarks()
         bookmarks.removeValue(forKey: path)
         saveBookmarks(bookmarks)
+        storageLock.unlock()
     }
 
     /// Resolve all saved bookmarks (call on app launch)
@@ -171,14 +181,23 @@ class SecurityBookmarkManager {
             #if DEBUG
             print("Failed to resolve bookmark for \(path): \(error)")
             #endif
-            // Remove invalid bookmark
+            // Remove invalid bookmark (atomic load-modify-save)
+            storageLock.lock()
             var bookmarks = loadBookmarks()
             bookmarks.removeValue(forKey: path)
             saveBookmarks(bookmarks)
+            storageLock.unlock()
         }
     }
 
+    // MARK: - Keychain Storage
+
     private func loadBookmarks() -> [String: Data] {
+        // Try Keychain first
+        if let data = loadFromKeychain() {
+            return data
+        }
+        // Fallback to UserDefaults (pre-migration)
         guard let data = UserDefaults.standard.data(forKey: bookmarksKey),
               let bookmarks = try? JSONDecoder().decode([String: Data].self, from: data) else {
             return [:]
@@ -187,8 +206,64 @@ class SecurityBookmarkManager {
     }
 
     private func saveBookmarks(_ bookmarks: [String: Data]) {
-        if let data = try? JSONEncoder().encode(bookmarks) {
-            UserDefaults.standard.set(data, forKey: bookmarksKey)
+        // Save to Keychain
+        saveToKeychain(bookmarks)
+    }
+
+    private func migrateToKeychainIfNeeded() {
+        guard !UserDefaults.standard.bool(forKey: keychainMigrationKey) else { return }
+
+        // Load from UserDefaults if present
+        if let data = UserDefaults.standard.data(forKey: bookmarksKey),
+           let bookmarks = try? JSONDecoder().decode([String: Data].self, from: data),
+           !bookmarks.isEmpty {
+            saveToKeychain(bookmarks)
+            // Remove from UserDefaults after successful migration
+            UserDefaults.standard.removeObject(forKey: bookmarksKey)
+        }
+        UserDefaults.standard.set(true, forKey: keychainMigrationKey)
+    }
+
+    private func loadFromKeychain() -> [String: Data]? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        guard status == errSecSuccess, let data = result as? Data else {
+            return nil
+        }
+
+        return try? JSONDecoder().decode([String: Data].self, from: data)
+    }
+
+    private func saveToKeychain(_ bookmarks: [String: Data]) {
+        guard let data = try? JSONEncoder().encode(bookmarks) else { return }
+
+        // Try to update first
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount
+        ]
+
+        let attributes: [String: Any] = [
+            kSecValueData as String: data
+        ]
+
+        let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+
+        if updateStatus == errSecItemNotFound {
+            // Item doesn't exist, add it
+            var addQuery = query
+            addQuery[kSecValueData as String] = data
+            SecItemAdd(addQuery as CFDictionary, nil)
         }
     }
 

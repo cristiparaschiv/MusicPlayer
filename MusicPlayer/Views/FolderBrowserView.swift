@@ -13,7 +13,7 @@ struct FolderBrowserView: View {
     @State private var rootNodes: [FolderNode] = []
     @State private var selectedFolder: String?
     @State private var tracks: [Track] = []
-    @State private var trackToEdit: Track?
+    @State private var tracksToEdit: [Track]?
     @State private var isLoading = true
 
     private let trackDAO = TrackDAO()
@@ -38,6 +38,24 @@ struct FolderBrowserView: View {
 
             Divider()
 
+            if rootNodes.isEmpty && !isLoading {
+                VStack(spacing: 12) {
+                    Spacer()
+                    Image(systemName: "folder")
+                        .font(.system(size: 48))
+                        .foregroundStyle(.secondary.opacity(0.4))
+                    Text("No Folders Configured")
+                        .font(.title3)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.secondary)
+                    Text("Add a music folder in Settings to browse your files")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+
             HSplitView {
                 // Folder tree
                 ScrollView {
@@ -53,7 +71,7 @@ struct FolderBrowserView: View {
                 // Track list
                 TrackTableView(
                     tracks: tracks,
-                    config: TrackTableConfig(onEditTrack: { trackToEdit = $0 }),
+                    config: TrackTableConfig(onEditTrack: { tracksToEdit = $0 }),
                     onPlayTrack: { track, allTracks in
                         if let index = allTracks.firstIndex(where: { $0.id == track.id }) {
                             QueueManager.shared.setQueue(allTracks, startIndex: index)
@@ -70,8 +88,10 @@ struct FolderBrowserView: View {
         .onReceive(NotificationCenter.default.publisher(for: Constants.Notifications.libraryDidUpdate)) { _ in
             buildTree()
         }
-        .sheet(item: $trackToEdit) { track in
-            TrackEditorView(track: track)
+        .sheet(isPresented: Binding(get: { tracksToEdit != nil }, set: { if !$0 { tracksToEdit = nil } })) {
+            if let tracks = tracksToEdit {
+                TrackEditorView(tracks: tracks)
+            }
         }
     }
 
@@ -180,11 +200,14 @@ struct FolderTreeRow: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 4) {
                 if node.children != nil {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 12)
-                        .onTapGesture { isExpanded.toggle() }
+                    Button { isExpanded.toggle() } label: {
+                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 12)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(isExpanded ? "Collapse \(node.name)" : "Expand \(node.name)")
                 } else {
                     Spacer().frame(width: 12)
                 }

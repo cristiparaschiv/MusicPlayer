@@ -57,20 +57,22 @@ class SearchManager: ObservableObject {
 
             let query = self.searchText
 
+            // Extract DAO references before detached task to avoid capturing @MainActor self
+            let trackDAO = self.trackDAO
+            let albumDAO = self.albumDAO
+            let artistDAO = self.artistDAO
+
             // Perform searches on background thread
             let tracks = await Task.detached {
-                let results = self.trackDAO.search(query: query, limit: 100)
-                return results
+                trackDAO.search(query: query, limit: 100)
             }.value
 
             let albums = await Task.detached {
-                let results = self.albumDAO.search(query: query, limit: 100)
-                return results
+                albumDAO.search(query: query, limit: 100)
             }.value
 
             let artists = await Task.detached {
-                let results = self.artistDAO.search(query: query, limit: 100)
-                return results
+                artistDAO.search(query: query, limit: 100)
             }.value
 
             // Check if task was cancelled before updating results

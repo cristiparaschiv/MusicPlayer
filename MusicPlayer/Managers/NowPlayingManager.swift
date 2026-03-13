@@ -3,6 +3,7 @@ import AppKit
 import SwiftUI
 import Combine
 
+@MainActor
 class NowPlayingManager: ObservableObject {
     static let shared = NowPlayingManager()
 
@@ -270,6 +271,14 @@ class NowPlayingManager: ObservableObject {
             object: nil
         )
 
+        // Artwork changed (e.g. user picked new artwork via picker)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleArtworkDidChange(_:)),
+            name: Constants.Notifications.artworkDidChange,
+            object: nil
+        )
+
         // Lyrics did load (if lyrics were loaded externally)
         NotificationCenter.default.addObserver(
             self,
@@ -296,54 +305,45 @@ class NowPlayingManager: ObservableObject {
     }
 
     @objc private func handlePlaybackTimeChanged(_ notification: Notification) {
-        DispatchQueue.main.async {
-            self.currentTime = self.playerManager.currentTime
-            self.duration = self.playerManager.duration
-        }
+        currentTime = playerManager.currentTime
+        duration = playerManager.duration
     }
 
     private func loadInitialState() {
-        DispatchQueue.main.async {
-            self.currentTrack = self.queueManager.currentTrack
-            self.playbackState = self.playerManager.playbackState
-            self.currentTime = self.playerManager.currentTime
-            self.duration = self.playerManager.duration
-            self.volume = self.playerManager.volume
-            self.isShuffleEnabled = self.queueManager.isShuffleEnabled
-            self.repeatMode = self.queueManager.repeatMode
-            self.queue = self.queueManager.currentQueue
-            self.currentTrackIndex = self.queueManager.currentTrackIndex
+        currentTrack = queueManager.currentTrack
+        playbackState = playerManager.playbackState
+        currentTime = playerManager.currentTime
+        duration = playerManager.duration
+        volume = playerManager.volume
+        isShuffleEnabled = queueManager.isShuffleEnabled
+        repeatMode = queueManager.repeatMode
+        queue = queueManager.currentQueue
+        currentTrackIndex = queueManager.currentTrackIndex
 
-            // Load artwork and lyrics for current track
-            if self.currentTrack != nil {
-                self.loadArtwork()
-                self.loadLyrics()
-            }
+        // Load artwork and lyrics for current track
+        if currentTrack != nil {
+            loadArtwork()
+            loadLyrics()
         }
     }
 
     // MARK: - Notification Handlers
 
     @objc private func handleTrackDidChange(_ notification: Notification) {
-        DispatchQueue.main.async {
-            let previousTrack = self.currentTrack
-            self.currentTrack = self.queueManager.currentTrack
-            self.currentTrackIndex = self.queueManager.currentTrackIndex
+        let previousTrack = currentTrack
+        currentTrack = queueManager.currentTrack
+        currentTrackIndex = queueManager.currentTrackIndex
 
-            // Only reload if track actually changed
-            if previousTrack?.id != self.currentTrack?.id {
-                // Clear previous data
-                self.clearCache()
+        // Only reload if track actually changed
+        if previousTrack?.id != currentTrack?.id {
+            clearCache()
 
-                // Load new data
-                if self.currentTrack != nil {
-                    self.loadArtwork()
-                    self.loadLyrics()
-                }
-
-                // Preload next track
-                self.preloadNextTrack()
+            if currentTrack != nil {
+                loadArtwork()
+                loadLyrics()
             }
+
+            preloadNextTrack()
         }
     }
 
@@ -351,45 +351,46 @@ class NowPlayingManager: ObservableObject {
         if let userInfo = notification.userInfo,
            let stateRawValue = userInfo["state"] as? String,
            let state = PlaybackState(rawValue: stateRawValue) {
-            DispatchQueue.main.async {
-                self.playbackState = state
-            }
+            playbackState = state
         }
     }
 
     @objc private func handleVolumeChanged(_ notification: Notification) {
         if let userInfo = notification.userInfo,
-           let volume = userInfo["volume"] as? Float {
-            DispatchQueue.main.async {
-                self.volume = volume
-            }
+           let vol = userInfo["volume"] as? Float {
+            volume = vol
         }
     }
 
     @objc private func handleQueueDidChange(_ notification: Notification) {
-        DispatchQueue.main.async {
-            self.queue = self.queueManager.currentQueue
-            self.currentTrackIndex = self.queueManager.currentTrackIndex
-            self.isShuffleEnabled = self.queueManager.isShuffleEnabled
-        }
+        queue = queueManager.currentQueue
+        currentTrackIndex = queueManager.currentTrackIndex
+        isShuffleEnabled = queueManager.isShuffleEnabled
     }
 
     @objc private func handleRepeatModeChanged(_ notification: Notification) {
         if let userInfo = notification.userInfo,
            let modeRawValue = userInfo["repeatMode"] as? String,
            let mode = RepeatMode(rawValue: modeRawValue) {
-            DispatchQueue.main.async {
-                self.repeatMode = mode
-            }
+            repeatMode = mode
         }
     }
 
     @objc private func handleShuffleModeChanged(_ notification: Notification) {
         if let userInfo = notification.userInfo,
            let shuffleEnabled = userInfo["shuffleEnabled"] as? Bool {
-            DispatchQueue.main.async {
-                self.isShuffleEnabled = shuffleEnabled
-            }
+            isShuffleEnabled = shuffleEnabled
+        }
+    }
+
+    @objc private func handleArtworkDidChange(_ notification: Notification) {
+        if let albumId = notification.userInfo?["albumId"] as? Int64,
+           currentTrack?.albumId == albumId {
+            artworkManager.clearAlbumCache(
+                albumTitle: currentTrack?.albumTitle ?? "",
+                artistName: currentTrack?.albumArtistName ?? currentTrack?.artistName
+            )
+            loadArtwork(force: true)
         }
     }
 
@@ -398,10 +399,8 @@ class NowPlayingManager: ObservableObject {
            let trackId = userInfo["trackId"] as? Int64,
            let image = userInfo["artwork"] as? NSImage,
            trackId == currentTrack?.id {
-            DispatchQueue.main.async {
-                self.artwork = image
-                self.artworkState = .loaded
-            }
+            artwork = image
+            artworkState = .loaded
         }
     }
 
@@ -410,10 +409,8 @@ class NowPlayingManager: ObservableObject {
            let trackId = userInfo["trackId"] as? Int64,
            let lyricsText = userInfo["lyrics"] as? String,
            trackId == currentTrack?.id {
-            DispatchQueue.main.async {
-                self.lyrics = lyricsText
-                self.lyricsState = .loaded
-            }
+            lyrics = lyricsText
+            lyricsState = .loaded
         }
     }
 
@@ -421,11 +418,8 @@ class NowPlayingManager: ObservableObject {
         if let userInfo = notification.userInfo,
            let trackId = userInfo["trackId"] as? Int64,
            trackId == currentTrack?.id {
-            // Track is a struct, so we need to reload it from the database to get updated favorite status
-            DispatchQueue.main.async {
-                if let updatedTrack = TrackDAO().getById(id: trackId) {
-                    self.currentTrack = updatedTrack
-                }
+            if let updatedTrack = TrackDAO().getById(id: trackId) {
+                currentTrack = updatedTrack
             }
         }
     }

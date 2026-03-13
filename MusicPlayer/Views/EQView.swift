@@ -118,6 +118,19 @@ struct EQView: View {
                             .frame(maxWidth: .infinity)
                         }
                         .frame(height: 180)
+                        .accessibilityLabel("Band \(EQPreset.bandLabels[i])")
+                        .accessibilityValue("\(String(format: "%+.0f", eq.gains[i])) dB")
+                        .accessibilityAdjustableAction { direction in
+                            let step: Float = 1.0
+                            switch direction {
+                            case .increment:
+                                eq.setGain(min(eq.gains[i] + step, EQPreset.maxGain), forBand: i)
+                            case .decrement:
+                                eq.setGain(max(eq.gains[i] - step, EQPreset.minGain), forBand: i)
+                            @unknown default:
+                                break
+                            }
+                        }
 
                         // Gain value
                         Text(String(format: "%+.0f", eq.gains[i]))
@@ -138,7 +151,7 @@ struct EQView: View {
 
             Spacer(minLength: 8)
         }
-        .frame(width: 480, height: 300)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .alert("Save Preset", isPresented: $showingSaveAlert) {
             TextField("Preset name", text: $customPresetName)
             Button("Cancel", role: .cancel) {

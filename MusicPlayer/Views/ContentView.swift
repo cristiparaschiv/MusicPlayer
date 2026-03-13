@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @State private var selection: SidebarItem? = .home
     @State private var showQueue = false
-    @State private var showNowPlaying = true
+    @AppStorage("showNowPlayingPanel") private var showNowPlaying = true
     @StateObject private var searchManager = SearchManager()
     @State private var localEventMonitor: Any?
     @State private var isLibraryEmpty: Bool = true
@@ -73,6 +73,10 @@ struct ContentView: View {
                                 case .columnBrowser:
                                     ColumnBrowserView()
                                         .navigationTitle("Browser")
+                                case .radio(let station):
+                                    RadioStationView(station: station)
+                                        .id(station.id)
+                                        .navigationTitle(station.name)
                                 case .playlist(let playlist):
                                     PlaylistView(playlist: playlist)
                                         .id(playlist.id)
@@ -89,35 +93,6 @@ struct ContentView: View {
                                 AlbumDetailView(album: album)
                             }
                         }
-                        .overlay(alignment: .topTrailing) {
-                            if showSearchDropdown && !searchManager.searchText.isEmpty {
-                                SearchDropdownView(
-                                    searchManager: searchManager,
-                                    onTrackSelected: { track in
-                                        PlayerManager.shared.play(track: track)
-                                        dismissSearch()
-                                    },
-                                    onAlbumSelected: { album in
-                                        dismissSearch()
-                                        navigationPath.append(album)
-                                    },
-                                    onArtistSelected: { artist in
-                                        dismissSearch()
-                                        navigationPath.append(artist)
-                                    }
-                                )
-                                .padding(.top, 4)
-                                .padding(.trailing, 16)
-                                .transition(.opacity.combined(with: .move(edge: .top)))
-                                .zIndex(100)
-                                .onTapGesture {}  // Prevent taps from propagating
-                            }
-                        }
-                        .onTapGesture {
-                            if showSearchDropdown {
-                                showSearchDropdown = false
-                            }
-                        }
                     }
                     .toolbar {
                         ToolbarItem(placement: .automatic) {
@@ -129,12 +104,44 @@ struct ContentView: View {
                                         withAnimation(.easeOut(duration: 0.2)) {
                                             showSearchDropdown = true
                                         }
+                                        // Auto-switch sidebar to search view
+                                        if selection != .search {
+                                            selection = .search
+                                        }
                                     } else {
                                         withAnimation(.easeOut(duration: 0.15)) {
                                             showSearchDropdown = false
                                         }
                                     }
                                 }
+                        }
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        if showSearchDropdown && !searchManager.searchText.isEmpty {
+                            SearchDropdownView(
+                                searchManager: searchManager,
+                                onTrackSelected: { track in
+                                    PlayerManager.shared.play(track: track)
+                                    dismissSearch()
+                                },
+                                onAlbumSelected: { album in
+                                    dismissSearch()
+                                    navigationPath.append(album)
+                                },
+                                onArtistSelected: { artist in
+                                    dismissSearch()
+                                    navigationPath.append(artist)
+                                }
+                            )
+                            .padding(.top, 4)
+                            .padding(.trailing, 16)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                            .zIndex(100)
+                        }
+                    }
+                    .onTapGesture {
+                        if showSearchDropdown {
+                            showSearchDropdown = false
                         }
                     }
 
@@ -164,6 +171,11 @@ struct ContentView: View {
                     color.opacity(0.12)
                         .ignoresSafeArea()
                         .animation(.easeInOut(duration: 0.5), value: nowPlaying.dominantColor != nil)
+                }
+            }
+            .onChange(of: selection) { _, newValue in
+                if newValue != .search && showSearchDropdown {
+                    showSearchDropdown = false
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ToggleQueue"))) { _ in

@@ -8,7 +8,7 @@ struct PlaylistView: View {
     @State private var showingDeleteAlert = false
     @State private var showingClearAlert = false
     @State private var showingSmartPlaylistEditor = false
-    @State private var trackToEdit: Track?
+    @State private var tracksToEdit: [Track]?
     @State private var importMessage: String?
 
     @Environment(\.dismiss) private var dismiss
@@ -165,7 +165,7 @@ struct PlaylistView: View {
                                 removeFromPlaylist(trackId: id)
                             }
                         },
-                        onEditTrack: { trackToEdit = $0 },
+                        onEditTrack: { tracksToEdit = $0 },
                         allowReorder: !isFavorites && playlist?.isSmartPlaylist != true,
                         onReorder: { newOrder in
                             guard let playlistId = playlist?.id else { return }
@@ -197,8 +197,10 @@ struct PlaylistView: View {
         } message: {
             Text("Are you sure you want to remove all songs from \"\(displayName)\"?")
         }
-        .sheet(item: $trackToEdit) { track in
-            TrackEditorView(track: track)
+        .sheet(isPresented: Binding(get: { tracksToEdit != nil }, set: { if !$0 { tracksToEdit = nil } })) {
+            if let tracks = tracksToEdit {
+                TrackEditorView(tracks: tracks)
+            }
         }
         .sheet(isPresented: $showingSmartPlaylistEditor) {
             if let playlist = playlist {

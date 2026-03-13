@@ -18,6 +18,11 @@ struct NowPlayingView: View {
                     // Track info
                     trackInfoSection(track: track)
 
+                    // Star rating
+                    StarRatingView(rating: track.rating, size: 16) { newRating in
+                        TrackDAO().updateRating(trackId: track.id, rating: newRating)
+                    }
+
                     // Audio info pills
                     audioInfoSection(track: track)
 
@@ -284,6 +289,16 @@ struct NowPlayingView: View {
 
         Button("Show in Finder") {
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: track.filePath)])
+        }
+
+        if let albumId = track.albumId {
+            Divider()
+            Button("Choose Artwork...") {
+                let albumDAO = AlbumDAO()
+                if let album = albumDAO.getById(id: albumId) {
+                    ArtworkPickerWindowManager.shared.show(for: album)
+                }
+            }
         }
     }
 

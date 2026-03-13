@@ -57,6 +57,15 @@ struct PlayerControlBar: View {
                                 .cornerRadius(3)
                         }
                     }
+                    if RadioManager.shared.isActive, let station = RadioManager.shared.activeStation {
+                        HStack(spacing: 4) {
+                            Image(systemName: "antenna.radiowaves.left.and.right")
+                                .font(.caption2)
+                            Text(station.name)
+                                .font(.caption2)
+                        }
+                        .foregroundColor(.accentColor)
+                    }
                 }
                 .frame(minWidth: 120, maxWidth: 200, alignment: .leading)
 

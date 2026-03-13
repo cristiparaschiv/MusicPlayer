@@ -40,7 +40,7 @@ struct KeyboardShortcutsView: View {
                     shortcutSection("Views") {
                         shortcutRow("Immersive Mode", keys: "Cmd + Shift + F")
                         shortcutRow("Mini Player", keys: "Cmd + Shift + M")
-                        shortcutRow("Equalizer", keys: "Cmd + Shift + E")
+                        shortcutRow("Audio Effects", keys: "Cmd + Shift + E")
                     }
 
                     shortcutSection("Immersive Mode") {

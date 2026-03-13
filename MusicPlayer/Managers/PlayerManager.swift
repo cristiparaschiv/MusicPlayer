@@ -193,7 +193,9 @@ class PlayerManager: NSObject {
                 QueueManager.shared.setQueue([track], startIndex: 0)
             } else {
                 // Skip to track in queue
-                _ = QueueManager.shared.skipToTrack(at: QueueManager.shared.indexOfTrack(track)!)
+                if let index = QueueManager.shared.indexOfTrack(track) {
+                    _ = QueueManager.shared.skipToTrack(at: index)
+                }
             }
 
             self.stateLock.lock()
@@ -623,8 +625,11 @@ class PlayerManager: NSObject {
     private func safeCleanupPlayer(_ player: AudioPlayer?) {
         guard let player = player else { return }
 
-        // Remove EQ node tracking for this player's engine
+        // Remove effect node tracking for this player's engine
         EQManager.shared.removeEQNode(for: player.audioEngine)
+        ReverbManager.shared.removeNode(for: player.audioEngine)
+        DelayManager.shared.removeNode(for: player.audioEngine)
+        PitchSpeedManager.shared.removeNode(for: player.audioEngine)
 
         // Stop the player first
         player.stop()
@@ -704,12 +709,11 @@ class PlayerManager: NSObject {
         let player = AudioPlayer()
 
         do {
-            // Setup delegate BEFORE playing — reconfigureProcessingGraph
-            // will be called by SFBAudioEngine to insert our EQ node
             player.delegate = self
-
-            // Play the track
             try player.play(url)
+
+            // Insert effect chain into the audio graph after playback starts
+            insertEffectNodes(into: player)
 
             // Set volume after starting playback (with ReplayGain)
             try player.setVolume(effectiveVolume(for: track))
@@ -785,12 +789,11 @@ class PlayerManager: NSObject {
         let newPlayer = AudioPlayer()
 
         do {
-            // Setup delegate BEFORE playing — reconfigureProcessingGraph
-            // will be called by SFBAudioEngine to insert our EQ node
             newPlayer.delegate = self
-
-            // Start playback on the new player at zero volume
             try newPlayer.play(url)
+
+            // Insert effect chain into the audio graph after playback starts
+            insertEffectNodes(into: newPlayer)
 
             // Set volume to 0 after starting playback
             try newPlayer.setVolume(0.0)
@@ -828,6 +831,12 @@ class PlayerManager: NSObject {
                         return
                     }
 
+                    // Capture current state under lock
+                    self.stateLock.lock()
+                    let capturedFadingOut = self.fadingOutPlayer
+                    let capturedAudioPlayer = self.audioPlayer
+                    self.stateLock.unlock()
+
                     state.currentStep += 1
                     let progress = Double(state.currentStep) / Double(steps)
 
@@ -835,12 +844,12 @@ class PlayerManager: NSObject {
                     let oldVolume = Float((1.0 - progress)) * targetVolume
                     let newVolume = Float(progress) * targetVolume
 
-                    // Apply volumes to the players — guard against cleaned-up players
+                    // Apply volumes to the captured player references
                     do {
-                        if self.fadingOutPlayer != nil {
+                        if capturedFadingOut != nil {
                             try currentPlayer.setVolume(oldVolume)
                         }
-                        if self.audioPlayer === newPlayer {
+                        if capturedAudioPlayer === newPlayer {
                             try newPlayer.setVolume(newVolume)
                         }
                     } catch {
@@ -856,7 +865,7 @@ class PlayerManager: NSObject {
 
                         // Ensure final volume on new player
                         do {
-                            if self.audioPlayer === newPlayer {
+                            if capturedAudioPlayer === newPlayer {
                                 try newPlayer.setVolume(targetVolume)
                             }
                         } catch {
@@ -869,15 +878,21 @@ class PlayerManager: NSObject {
                         self.playerQueue.async { [weak self] in
                             guard let self = self else { return }
 
-                            self.safeCleanupPlayer(self.fadingOutPlayer)
+                            self.stateLock.lock()
+                            let playerToClean = self.fadingOutPlayer
                             self.fadingOutPlayer = nil
+                            self.stateLock.unlock()
+
+                            self.safeCleanupPlayer(playerToClean)
                             self.isCrossfading = false
                         }
                     }
                 }
 
                 // Run the timer on the main run loop with common mode
-                RunLoop.main.add(self.crossfadeTimer!, forMode: .common)
+                if let timer = self.crossfadeTimer {
+                    RunLoop.main.add(timer, forMode: .common)
+                }
             }
 
         } catch {
@@ -941,9 +956,9 @@ class PlayerManager: NSObject {
         let nextPlayer = AudioPlayer()
 
         do {
-            // Set delegate so reconfigureProcessingGraph inserts EQ node
             nextPlayer.delegate = self
             try nextPlayer.play(url)
+            insertEffectNodes(into: nextPlayer)
             nextPlayer.pause() // Pause immediately after loading
 
             // Set volume to 0
@@ -1163,13 +1178,15 @@ class PlayerManager: NSObject {
     // MARK: - Notifications
 
     private func notifyPlaybackStateChanged() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
+        stateLock.lock()
+        let stateRaw = _playbackState.rawValue
+        stateLock.unlock()
 
+        DispatchQueue.main.async {
             NotificationCenter.default.post(
                 name: Constants.Notifications.playbackStateChanged,
                 object: nil,
-                userInfo: ["state": self._playbackState.rawValue]
+                userInfo: ["state": stateRaw]
             )
         }
     }
@@ -1201,33 +1218,59 @@ extension PlayerManager: AudioPlayer.Delegate {
         }
     }
 
-    private func insertEQNode(into player: AudioPlayer) {
+    private func insertEffectNodes(into player: AudioPlayer) {
         let engine = player.audioEngine
         let mixer = engine.mainMixerNode
 
         // Find the actual source node connected to mainMixerNode input bus 0
-        // This avoids using player.playerNode which may not bridge correctly
         guard let connectionPoint = engine.inputConnectionPoint(for: mixer, inputBus: 0),
               let sourceNode = connectionPoint.node else { return }
         let format = mixer.inputFormat(forBus: 0)
 
         let eqNode = EQManager.shared.createEQNode(for: engine)
-        engine.attach(eqNode)
+        let reverbNode = ReverbManager.shared.createNode(for: engine)
+        let delayNode = DelayManager.shared.createNode(for: engine)
+        let timePitchNode = PitchSpeedManager.shared.createNode(for: engine)
 
-        // Rewire: sourceNode (playerNode) → eqNode → mainMixerNode
+        engine.attach(eqNode)
+        engine.attach(reverbNode)
+        engine.attach(delayNode)
+        engine.attach(timePitchNode)
+
+        // Rewire: sourceNode → EQ → Reverb → Delay → TimePitch → mainMixerNode
         engine.disconnectNodeInput(mixer)
         engine.connect(sourceNode, to: eqNode, format: format)
-        engine.connect(eqNode, to: mixer, format: format)
+        engine.connect(eqNode, to: reverbNode, format: format)
+        engine.connect(reverbNode, to: delayNode, format: format)
+        engine.connect(delayNode, to: timePitchNode, format: format)
+        engine.connect(timePitchNode, to: mixer, format: format)
+
+        #if DEBUG
+        print("[AudioEffects] Inserted effect chain: source → EQ → Reverb → Delay → TimePitch → Mixer (format: \(format))")
+        #endif
     }
 
     func audioPlayer(_ audioPlayer: AudioPlayer, reconfigureProcessingGraph engine: AVAudioEngine, with format: AVAudioFormat) -> AVAudioNode {
-        // Create a fresh EQ node for this engine's format change
+        // Build chain: playerNode → EQ → Reverb → Delay → TimePitch → mainMixer
         let eqNode = EQManager.shared.createEQNode(for: engine)
+        let reverbNode = ReverbManager.shared.createNode(for: engine)
+        let delayNode = DelayManager.shared.createNode(for: engine)
+        let timePitchNode = PitchSpeedManager.shared.createNode(for: engine)
+
         engine.attach(eqNode)
+        engine.attach(reverbNode)
+        engine.attach(delayNode)
+        engine.attach(timePitchNode)
 
-        // Connect eqNode → mainMixerNode (SFBAudioEngine will connect playerNode → eqNode)
-        engine.connect(eqNode, to: engine.mainMixerNode, format: format)
+        engine.connect(eqNode, to: reverbNode, format: format)
+        engine.connect(reverbNode, to: delayNode, format: format)
+        engine.connect(delayNode, to: timePitchNode, format: format)
+        engine.connect(timePitchNode, to: engine.mainMixerNode, format: format)
 
+        // SFBAudioEngine connects playerNode → returned node
+        #if DEBUG
+        print("[AudioEffects] Chain built: EQ → Reverb → Delay → TimePitch → Mixer (format: \(format))")
+        #endif
         return eqNode
     }
 

@@ -7,7 +7,7 @@ class ArtworkManager {
 
     // MARK: - Properties
 
-    private let artworkQueue = DispatchQueue(label: "com.orangemusicplayer.artwork", qos: .utility)
+    private let artworkQueue = DispatchQueue(label: "com.orangemusicplayer.artwork", qos: .utility, attributes: .concurrent)
     private let memoryCache = NSCache<NSString, NSImage>()
     private let cacheLock = NSLock()
 
@@ -20,11 +20,14 @@ class ArtworkManager {
     private let rateLimitLock = NSLock()
     private let musicBrainzRateLimit: TimeInterval = 1.0
 
+    // Concurrency limiting semaphore — allows up to 4 concurrent artwork loads
+    private let concurrencySemaphore = DispatchSemaphore(value: 4)
+
     // MARK: - Initialization
 
     private init() {
-        memoryCache.countLimit = 100
-        memoryCache.totalCostLimit = 50 * 1024 * 1024 // 50 MB
+        memoryCache.countLimit = 200
+        memoryCache.totalCostLimit = 100 * 1024 * 1024 // 100 MB
     }
 
     // MARK: - Public API - Album Artwork
@@ -34,19 +37,48 @@ class ArtworkManager {
         fetchAlbumArtwork(albumTitle: album.title, artistName: album.artistName, completion: completion)
     }
 
+    // MARK: - Async API (preferred for SwiftUI)
+
+    /// Async wrapper for album artwork — supports Task cancellation
+    func fetchAlbumArtwork(for album: Album) async throws -> NSImage {
+        try await withCheckedThrowingContinuation { continuation in
+            fetchAlbumArtwork(for: album) { result in
+                continuation.resume(with: result)
+            }
+        }
+    }
+
+    /// Async wrapper for artist artwork — supports Task cancellation
+    func fetchArtistArtwork(for artist: Artist) async throws -> NSImage {
+        try await withCheckedThrowingContinuation { continuation in
+            fetchArtistArtwork(for: artist) { result in
+                continuation.resume(with: result)
+            }
+        }
+    }
+
     /// Fetch artwork for an album by title and artist
     func fetchAlbumArtwork(albumTitle: String, artistName: String?, completion: @escaping (Result<NSImage, ArtworkError>) -> Void) {
+        // Generate cache key and check memory cache immediately (fast path, no queue needed)
+        let cacheKey = self.generateCacheKey(type: .album, name: albumTitle, artist: artistName)
+
+        if let cachedImage = self.getCachedImage(for: cacheKey) {
+            DispatchQueue.main.async { completion(.success(cachedImage)) }
+            return
+        }
+
         artworkQueue.async { [weak self] in
             guard let self = self else { return }
 
-            // Generate cache key
-            let cacheKey = self.generateCacheKey(type: .album, name: albumTitle, artist: artistName)
-
-            // Check memory cache
+            // Re-check memory cache (may have been populated while queued)
             if let cachedImage = self.getCachedImage(for: cacheKey) {
                 self.callCompletion(completion, with: .success(cachedImage))
                 return
             }
+
+            // Acquire semaphore to limit concurrent heavy work
+            self.concurrencySemaphore.wait()
+            defer { self.concurrencySemaphore.signal() }
 
             // Check disk cache
             if let diskCachedImage = self.loadImageFromDisk(cacheKey: cacheKey) {
@@ -55,11 +87,20 @@ class ArtworkManager {
                 return
             }
 
+            // Check for folder image (cover.jpg etc) using album tracks
+            if let folderImage = self.findFolderArtwork(albumTitle: albumTitle, artistName: artistName) {
+                if let resizedImage = self.resizeImage(folderImage, to: self.smallImageSize) {
+                    self.cacheImage(resizedImage, for: cacheKey)
+                    self.saveImageToDisk(image: resizedImage, cacheKey: cacheKey)
+                    self.callCompletion(completion, with: .success(resizedImage))
+                    return
+                }
+            }
+
             // Fetch from MusicBrainz
             self.fetchAlbumArtworkFromMusicBrainz(albumTitle: albumTitle, artistName: artistName) { result in
                 switch result {
                 case .success(let image):
-                    // Resize and cache the image
                     if let resizedImage = self.resizeImage(image, to: self.smallImageSize) {
                         self.cacheImage(resizedImage, for: cacheKey)
                         self.saveImageToDisk(image: resizedImage, cacheKey: cacheKey)
@@ -126,17 +167,25 @@ class ArtworkManager {
 
     /// Fetch artwork for an artist by name
     func fetchArtistArtwork(artistName: String, completion: @escaping (Result<NSImage, ArtworkError>) -> Void) {
+        // Fast path: check memory cache without hitting the queue
+        let cacheKey = self.generateCacheKey(type: .artist, name: artistName, artist: nil)
+
+        if let cachedImage = self.getCachedImage(for: cacheKey) {
+            DispatchQueue.main.async { completion(.success(cachedImage)) }
+            return
+        }
+
         artworkQueue.async { [weak self] in
             guard let self = self else { return }
 
-            // Generate cache key
-            let cacheKey = self.generateCacheKey(type: .artist, name: artistName, artist: nil)
-
-            // Check memory cache
+            // Re-check memory cache
             if let cachedImage = self.getCachedImage(for: cacheKey) {
                 self.callCompletion(completion, with: .success(cachedImage))
                 return
             }
+
+            self.concurrencySemaphore.wait()
+            defer { self.concurrencySemaphore.signal() }
 
             // Check disk cache
             if let diskCachedImage = self.loadImageFromDisk(cacheKey: cacheKey) {
@@ -149,7 +198,6 @@ class ArtworkManager {
             self.fetchArtistArtworkFromMusicBrainz(artistName: artistName) { result in
                 switch result {
                 case .success(let image):
-                    // Resize and cache the image
                     if let resizedImage = self.resizeImage(image, to: self.smallImageSize) {
                         self.cacheImage(resizedImage, for: cacheKey)
                         self.saveImageToDisk(image: resizedImage, cacheKey: cacheKey)
@@ -183,6 +231,155 @@ class ArtworkManager {
     func clearAllCaches() {
         clearMemoryCache()
         clearDiskCache()
+    }
+
+    // MARK: - Folder Artwork Lookup
+
+    private static let folderArtworkNames = [
+        "cover", "folder", "front", "album", "artwork", "art"
+    ]
+    private static let imageExtensions = ["jpg", "jpeg", "png"]
+
+    /// Search for cover.jpg, folder.jpg, front.jpg etc. in the directory of album tracks
+    private func findFolderArtwork(albumTitle: String, artistName: String?) -> NSImage? {
+        // Get a track from this album to find the directory
+        let trackDAO = TrackDAO()
+        let albumDAO = AlbumDAO()
+
+        // Find the album to get its ID
+        let albums = albumDAO.search(query: albumTitle)
+        guard let album = albums.first(where: { $0.artistName == artistName || artistName == nil }) else {
+            return nil
+        }
+
+        let tracks = trackDAO.getByAlbumId(albumId: album.id)
+        guard let firstTrack = tracks.first else { return nil }
+
+        let directory = URL(fileURLWithPath: firstTrack.filePath).deletingLastPathComponent()
+        return findFolderArtwork(in: directory)
+    }
+
+    /// Search for artwork image files in a specific directory
+    func findFolderArtwork(in directory: URL) -> NSImage? {
+        let fm = FileManager.default
+        for name in Self.folderArtworkNames {
+            for ext in Self.imageExtensions {
+                let fileURL = directory.appendingPathComponent("\(name).\(ext)")
+                if fm.fileExists(atPath: fileURL.path), let image = NSImage(contentsOf: fileURL) {
+                    return image
+                }
+            }
+        }
+        // Also check case-insensitive by listing directory
+        if let contents = try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
+            for fileURL in contents {
+                let name = fileURL.deletingPathExtension().lastPathComponent.lowercased()
+                let ext = fileURL.pathExtension.lowercased()
+                if Self.imageExtensions.contains(ext) && Self.folderArtworkNames.contains(name) {
+                    if let image = NSImage(contentsOf: fileURL) {
+                        return image
+                    }
+                }
+            }
+        }
+        return nil
+    }
+
+    // MARK: - Save Artwork
+
+    /// Save artwork for an album — writes cover.jpg to album folder or embeds in track metadata
+    func saveArtwork(for album: Album, image: NSImage) {
+        let trackDAO = TrackDAO()
+        let tracks = trackDAO.getByAlbumId(albumId: album.id)
+        guard !tracks.isEmpty else { return }
+
+        // Determine if all tracks share the same parent directory
+        let directories = Set(tracks.map { URL(fileURLWithPath: $0.filePath).deletingLastPathComponent().path })
+
+        if directories.count == 1, let dir = directories.first {
+            // All tracks in one folder — write cover.jpg
+            let coverURL = URL(fileURLWithPath: dir).appendingPathComponent("cover.jpg")
+            if let jpegData = imageToJPEGData(image, quality: 0.9) {
+                do {
+                    // Access security-scoped bookmark if needed
+                    let dirURL = URL(fileURLWithPath: dir)
+                    let accessing = dirURL.startAccessingSecurityScopedResource()
+                    defer { if accessing { dirURL.stopAccessingSecurityScopedResource() } }
+
+                    try jpegData.write(to: coverURL)
+                    #if DEBUG
+                    print("Saved cover.jpg to \(dir)")
+                    #endif
+                } catch {
+                    #if DEBUG
+                    print("Failed to write cover.jpg: \(error). Falling back to metadata embedding.")
+                    #endif
+                    embedArtworkInTracks(image: image, tracks: tracks)
+                }
+            }
+        } else {
+            // Tracks scattered — embed in each file's metadata
+            embedArtworkInTracks(image: image, tracks: tracks)
+        }
+
+        // Clear cache for this album and re-cache
+        let cacheKey = generateCacheKey(type: .album, name: album.title, artist: album.artistName)
+        memoryCache.removeObject(forKey: cacheKey as NSString)
+        let fileURL = getCacheFileURL(for: cacheKey)
+        try? FileManager.default.removeItem(at: fileURL)
+
+        // Cache resized version
+        if let resized = resizeImage(image, to: smallImageSize) {
+            cacheImage(resized, for: cacheKey)
+            saveImageToDisk(image: resized, cacheKey: cacheKey)
+        }
+
+        // Notify
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: Constants.Notifications.artworkDidChange,
+                object: nil,
+                userInfo: ["albumId": album.id]
+            )
+        }
+    }
+
+    private func embedArtworkInTracks(image: NSImage, tracks: [Track]) {
+        guard let jpegData = imageToJPEGData(image, quality: 0.9) else { return }
+
+        for track in tracks {
+            let url = URL(fileURLWithPath: track.filePath)
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+
+            guard let audioFile = try? AudioFile(readingPropertiesAndMetadataFrom: url) else { continue }
+
+            let picture = AttachedPicture(imageData: jpegData, type: .frontCover, description: "Front Cover")
+            audioFile.metadata.removeAllAttachedPictures()
+            audioFile.metadata.attachPicture(picture)
+
+            do {
+                try audioFile.writeMetadata()
+            } catch {
+                #if DEBUG
+                print("Failed to embed artwork in \(track.filePath): \(error)")
+                #endif
+            }
+        }
+    }
+
+    private func imageToJPEGData(_ image: NSImage, quality: CGFloat) -> Data? {
+        guard let tiffData = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData) else { return nil }
+        return bitmap.representation(using: .jpeg, properties: [.compressionFactor: quality])
+    }
+
+    /// Clear cached artwork for a specific album
+    func clearAlbumCache(albumTitle: String, artistName: String?) {
+        let cacheKey = generateCacheKey(type: .album, name: albumTitle, artist: artistName)
+        memoryCache.removeObject(forKey: cacheKey as NSString)
+        let fileURL = getCacheFileURL(for: cacheKey)
+        try? FileManager.default.removeItem(at: fileURL)
     }
 
     // MARK: - Private Methods - MusicBrainz API
@@ -493,7 +690,7 @@ class ArtworkManager {
 
     // MARK: - Private Methods - Image Processing
 
-    private func resizeImage(_ image: NSImage, to maxSize: CGFloat) -> NSImage? {
+    func resizeImage(_ image: NSImage, to maxSize: CGFloat) -> NSImage? {
         let originalSize = image.size
 
         // Calculate new size maintaining aspect ratio
