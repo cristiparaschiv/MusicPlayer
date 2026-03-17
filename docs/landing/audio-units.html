@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Unit Plugins — Orange Music Player</title>
+    <meta name="description" content="Host any Audio Unit (AU) effect plugin directly in Orange Music Player. Build custom effect chains with up to 8 slots, mixing built-in effects with third-party AU plugins.">
+    <link rel="icon" type="image/png" href="../../orange-music-player-icon-2.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&family=Playfair+Display:ital,wght@0,700;1,400&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --mandarin: #FF6600;
+            --mandarin-glow: rgba(255, 102, 0, 0.15);
+            --amber: #FFB300;
+            --gunmetal: #1A1A1A;
+            --obsidian: #0A0A0A;
+            --silver: #E5E5E5;
+            --muted: #777777;
+            --pitch: #000000;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html {
+            scroll-behavior: smooth;
+            background: var(--pitch);
+            color: var(--silver);
+        }
+
+        body {
+            font-family: 'DM Sans', sans-serif;
+            font-weight: 400;
+            line-height: 1.6;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .display { font-family: 'Playfair Display', serif; }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 clamp(24px, 5vw, 80px);
+        }
+
+        /* ── Navigation ── */
+        nav {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            z-index: 100;
+            padding: 20px 0;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+        }
+        nav .container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+            color: var(--silver);
+        }
+        .nav-brand span { font-weight: 700; font-size: 15px; letter-spacing: -0.02em; }
+        .nav-brand span em { font-style: normal; color: var(--mandarin); }
+        .nav-links { display: flex; gap: 32px; align-items: center; }
+        .nav-links a {
+            color: var(--muted);
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+            transition: color 0.3s;
+        }
+        .nav-links a:hover { color: var(--silver); }
+        .nav-links a.active { color: var(--mandarin); }
+        .nav-cta {
+            background: var(--mandarin) !important;
+            color: var(--pitch) !important;
+            padding: 10px 24px;
+            border-radius: 8px;
+            font-weight: 700 !important;
+            font-size: 13px !important;
+            transition: transform 0.2s, box-shadow 0.3s !important;
+        }
+        .nav-cta:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 30px rgba(255, 102, 0, 0.3);
+        }
+
+        /* ── Page Header ── */
+        .page-header {
+            padding: 160px 0 80px;
+            position: relative;
+            overflow: hidden;
+        }
+        .page-header::before {
+            content: '';
+            position: absolute;
+            top: -30%; left: 50%;
+            transform: translateX(-50%);
+            width: 700px; height: 700px;
+            background: radial-gradient(circle, rgba(255, 102, 0, 0.06) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        .page-header .section-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--amber);
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            margin-bottom: 16px;
+        }
+        .page-header h1 {
+            font-family: 'Playfair Display', serif;
+            font-size: clamp(36px, 5vw, 60px);
+            font-weight: 700;
+            line-height: 1.1;
+            letter-spacing: -0.02em;
+            margin-bottom: 20px;
+        }
+        .page-header h1 .orange { color: var(--mandarin); }
+        .page-header .lead {
+            font-size: 18px;
+            color: var(--muted);
+            max-width: 620px;
+            line-height: 1.7;
+        }
+
+        /* ── Docs Layout ── */
+        .docs-layout {
+            display: grid;
+            grid-template-columns: 220px 1fr;
+            gap: 60px;
+            padding-bottom: 120px;
+        }
+
+        /* ── Sidebar TOC ── */
+        .toc {
+            position: sticky;
+            top: 100px;
+            align-self: start;
+        }
+        .toc h4 {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            color: var(--mandarin);
+            margin-bottom: 16px;
+        }
+        .toc a {
+            display: block;
+            color: var(--muted);
+            text-decoration: none;
+            font-size: 13px;
+            padding: 6px 0;
+            border-left: 2px solid transparent;
+            padding-left: 12px;
+            transition: color 0.2s, border-color 0.2s;
+        }
+        .toc a:hover {
+            color: var(--silver);
+            border-left-color: rgba(255, 255, 255, 0.1);
+        }
+        .toc a.sub { padding-left: 24px; font-size: 12px; }
+
+        /* ── Content ── */
+        .docs-content h2 {
+            font-family: 'Playfair Display', serif;
+            font-size: 32px;
+            font-weight: 700;
+            margin: 64px 0 16px;
+            padding-top: 24px;
+            border-top: 1px solid rgba(255, 255, 255, 0.04);
+        }
+        .docs-content h2:first-child { margin-top: 0; border-top: none; padding-top: 0; }
+        .docs-content h3 {
+            font-size: 20px;
+            font-weight: 700;
+            margin: 36px 0 12px;
+            color: var(--silver);
+        }
+        .docs-content h4 {
+            font-size: 15px;
+            font-weight: 700;
+            margin: 24px 0 8px;
+            color: var(--silver);
+        }
+        .docs-content p {
+            color: var(--muted);
+            font-size: 15px;
+            line-height: 1.8;
+            margin-bottom: 16px;
+        }
+        .docs-content ul, .docs-content ol {
+            color: var(--muted);
+            font-size: 15px;
+            line-height: 1.8;
+            margin-bottom: 16px;
+            padding-left: 24px;
+        }
+        .docs-content li { margin-bottom: 4px; }
+        .docs-content a { color: var(--mandarin); text-decoration: none; }
+        .docs-content a:hover { text-decoration: underline; }
+
+        /* ── Code ── */
+        pre {
+            background: var(--gunmetal);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 10px;
+            padding: 20px 24px;
+            overflow-x: auto;
+            margin-bottom: 24px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            line-height: 1.7;
+            color: var(--silver);
+        }
+        code { font-family: 'JetBrains Mono', monospace; font-size: 0.9em; }
+        p code, li code, td code {
+            background: rgba(255, 255, 255, 0.06);
+            padding: 2px 7px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            color: var(--amber);
+        }
+
+        /* ── Table ── */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 24px;
+            font-size: 14px;
+        }
+        th {
+            text-align: left;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--mandarin);
+            padding: 10px 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        td {
+            padding: 10px 16px;
+            color: var(--muted);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+        }
+
+        /* ── Feature Cards ── */
+        .feature-row {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+        .feat {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            border-radius: 10px;
+            padding: 24px;
+        }
+        .feat h4 {
+            margin: 0 0 8px;
+            font-size: 14px;
+            color: var(--silver);
+        }
+        .feat p {
+            margin: 0;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        /* ── Signal Flow Diagram ── */
+        .signal-flow {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            margin: 32px 0;
+            overflow-x: auto;
+            padding: 16px 0;
+        }
+        .signal-node {
+            background: var(--gunmetal);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 8px;
+            padding: 12px 20px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--silver);
+            white-space: nowrap;
+            text-align: center;
+        }
+        .signal-node.highlight {
+            border-color: var(--mandarin);
+            color: var(--mandarin);
+            background: rgba(255, 102, 0, 0.06);
+        }
+        .signal-arrow {
+            font-size: 18px;
+            color: var(--muted);
+            padding: 0 8px;
+            flex-shrink: 0;
+        }
+
+        /* ── Slot Diagram ── */
+        .slot-diagram {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            margin: 24px 0;
+        }
+        .slot-box {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px dashed rgba(255, 255, 255, 0.08);
+            border-radius: 8px;
+            padding: 16px;
+            text-align: center;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--muted);
+        }
+        .slot-box.filled {
+            border-style: solid;
+            border-color: rgba(255, 102, 0, 0.2);
+            color: var(--silver);
+        }
+        .slot-box.filled.au {
+            border-color: rgba(100, 160, 255, 0.3);
+        }
+        .slot-box .slot-label {
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--mandarin);
+            margin-bottom: 6px;
+            display: block;
+        }
+        .slot-box.au .slot-label {
+            color: #64a0ff;
+        }
+
+        /* ── Callout ── */
+        .callout {
+            background: rgba(255, 179, 0, 0.06);
+            border-left: 3px solid var(--amber);
+            border-radius: 0 8px 8px 0;
+            padding: 16px 20px;
+            margin-bottom: 24px;
+        }
+        .callout p { margin-bottom: 0; color: var(--silver); font-size: 14px; }
+
+        /* ── Footer ── */
+        footer {
+            border-top: 1px solid rgba(255, 255, 255, 0.04);
+            padding: 48px 0;
+        }
+        .footer-grid {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .footer-copy { font-size: 13px; color: var(--muted); }
+        .footer-links { display: flex; gap: 24px; }
+        .footer-links a {
+            font-size: 13px;
+            color: var(--muted);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+        .footer-links a:hover { color: var(--silver); }
+
+        /* ── Responsive ── */
+        @media (max-width: 900px) {
+            .docs-layout { grid-template-columns: 1fr; }
+            .toc { display: none; }
+            .nav-links { display: none; }
+            .feature-row { grid-template-columns: 1fr; }
+            .slot-diagram { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+
+<!-- ── Navigation ── -->
+<nav>
+    <div class="container">
+        <a href="index.html" class="nav-brand">
+            <img src="../../orange-music-player-icon-2.png" alt="Orange Music Player" width="44" height="44" style="border-radius: 10px;">
+            <span><em>Orange</em> Music Player</span>
+        </a>
+        <div class="nav-links">
+            <a href="index.html#features">Features</a>
+            <a href="audio-units.html" class="active">Audio Units</a>
+            <a href="scripting.html">Scripting</a>
+            <a href="support.html">Support</a>
+            <a href="index.html#download" class="nav-cta">Download Free</a>
+        </div>
+    </div>
+</nav>
+
+<!-- ── Header ── -->
+<section class="page-header">
+    <div class="container">
+        <div class="section-label">Audio Unit Plugin Hosting</div>
+        <h1>Your plugins, <span class="orange">your chain</span></h1>
+        <p class="lead">Host any macOS Audio Unit (AU) effect plugin directly inside Orange. Build custom effect chains with up to 8 slots, mixing built-in effects with third-party plugins. Full parameter control, factory presets, and persistent state.</p>
+    </div>
+</section>
+
+<!-- ── Docs ── -->
+<div class="container">
+    <div class="docs-layout">
+        <aside class="toc">
+            <h4>Contents</h4>
+            <a href="#overview">Overview</a>
+            <a href="#signal-flow" class="sub">Signal Flow</a>
+            <a href="#effect-chain">Effect Chain</a>
+            <a href="#adding" class="sub">Adding Effects</a>
+            <a href="#reordering" class="sub">Reordering</a>
+            <a href="#bypass" class="sub">Bypass</a>
+            <a href="#built-in">Built-In Effects</a>
+            <a href="#au-plugins">AU Plugins</a>
+            <a href="#plugin-ui" class="sub">Plugin UI</a>
+            <a href="#parameters" class="sub">Parameters</a>
+            <a href="#presets" class="sub">Factory Presets</a>
+            <a href="#persistence">State &amp; Persistence</a>
+            <a href="#combined-presets">Combined Presets</a>
+            <a href="#scripting">Scripting Integration</a>
+        </aside>
+
+        <main class="docs-content">
+
+            <!-- ── Overview ── -->
+            <h2 id="overview">Overview</h2>
+            <p>Orange Music Player includes a full Audio Unit (AU) plugin host. Any AU effect plugin installed on your Mac can be loaded into Orange's effect chain and applied to your music in real time. This lets you use professional studio plugins &mdash; EQs, compressors, reverbs, saturators, and more &mdash; alongside Orange's built-in effects.</p>
+
+            <div class="feature-row">
+                <div class="feat">
+                    <h4>8-Slot Chain</h4>
+                    <p>Mix and match built-in effects and AU plugins in any order across 8 configurable slots.</p>
+                </div>
+                <div class="feat">
+                    <h4>Auto-Discovery</h4>
+                    <p>Scans your system for all installed AU effect plugins. New plugins appear automatically.</p>
+                </div>
+                <div class="feat">
+                    <h4>Native Plugin UI</h4>
+                    <p>Opens the plugin's own interface in a floating window. Falls back to a generic parameter view if unavailable.</p>
+                </div>
+            </div>
+            <div class="feature-row">
+                <div class="feat">
+                    <h4>Full State Persistence</h4>
+                    <p>Every plugin's parameters and state are saved and restored between sessions automatically.</p>
+                </div>
+                <div class="feat">
+                    <h4>Non-Destructive</h4>
+                    <p>All processing is real-time. Your audio files are never modified.</p>
+                </div>
+                <div class="feat">
+                    <h4>Script Control</h4>
+                    <p>Inspect the chain, toggle bypass, tweak parameters, and load presets from JavaScript.</p>
+                </div>
+            </div>
+
+            <h3 id="signal-flow">Signal Flow</h3>
+            <p>Audio flows from the player through each occupied slot in order, then to the system output. Bypassed slots are skipped. Empty slots are ignored.</p>
+
+            <div class="signal-flow">
+                <div class="signal-node">Player</div>
+                <div class="signal-arrow">&rarr;</div>
+                <div class="signal-node highlight">Slot 1</div>
+                <div class="signal-arrow">&rarr;</div>
+                <div class="signal-node highlight">Slot 2</div>
+                <div class="signal-arrow">&rarr;</div>
+                <div class="signal-node highlight">Slot 3</div>
+                <div class="signal-arrow">&rarr;</div>
+                <div class="signal-node" style="color: var(--muted);">...</div>
+                <div class="signal-arrow">&rarr;</div>
+                <div class="signal-node highlight">Slot 8</div>
+                <div class="signal-arrow">&rarr;</div>
+                <div class="signal-node">Output</div>
+            </div>
+
+            <!-- ── Effect Chain ── -->
+            <h2 id="effect-chain">Effect Chain</h2>
+            <p>The effect chain is the heart of the audio processing pipeline. It provides 8 slots that can each hold either a built-in effect or a third-party AU plugin.</p>
+
+            <div class="slot-diagram">
+                <div class="slot-box filled">
+                    <span class="slot-label">Slot 1</span>
+                    10-Band EQ
+                </div>
+                <div class="slot-box filled au">
+                    <span class="slot-label">Slot 2 &middot; AU</span>
+                    FabFilter Pro-Q
+                </div>
+                <div class="slot-box filled">
+                    <span class="slot-label">Slot 3</span>
+                    Reverb
+                </div>
+                <div class="slot-box filled au">
+                    <span class="slot-label">Slot 4 &middot; AU</span>
+                    Valhalla Room
+                </div>
+                <div class="slot-box">
+                    <span class="slot-label">Slot 5</span>
+                    Empty
+                </div>
+                <div class="slot-box">
+                    <span class="slot-label">Slot 6</span>
+                    Empty
+                </div>
+                <div class="slot-box">
+                    <span class="slot-label">Slot 7</span>
+                    Empty
+                </div>
+                <div class="slot-box">
+                    <span class="slot-label">Slot 8</span>
+                    Empty
+                </div>
+            </div>
+
+            <h3 id="adding">Adding Effects</h3>
+            <p>Open the Audio Effects panel from the menu bar (<strong>Playback &rarr; Audio Effects</strong> or <kbd>Cmd+Shift+E</kbd>). Click the <strong>+</strong> button on any empty slot to open the plugin picker. You'll see two tabs:</p>
+            <ul>
+                <li><strong>Built-in</strong> &mdash; Orange's four built-in effect types (EQ, Reverb, Delay, Pitch/Speed)</li>
+                <li><strong>Audio Units</strong> &mdash; All AU effect plugins installed on your system, grouped by manufacturer</li>
+            </ul>
+            <p>Select a plugin to insert it into the slot. AU plugins load asynchronously &mdash; playback continues uninterrupted while the plugin initializes.</p>
+
+            <h3 id="reordering">Reordering</h3>
+            <p>Drag and drop slots to reorder them. The effect chain rebuilds automatically. Signal flow always follows slot order from top to bottom (1 &rarr; 8).</p>
+
+            <h3 id="bypass">Bypass</h3>
+            <p>Click the power icon on any slot to bypass it. A bypassed effect is removed from the signal path without being unloaded &mdash; its state and parameters are preserved. Click again to re-enable.</p>
+
+            <div class="callout">
+                <p>Bypassing is instant and glitch-free. Use it to A/B compare your chain with and without specific effects.</p>
+            </div>
+
+            <!-- ── Built-In Effects ── -->
+            <h2 id="built-in">Built-In Effects</h2>
+            <p>Orange ships with four built-in audio effects. These load instantly and have dedicated UIs in the effects panel.</p>
+
+            <table>
+                <tr><th>Effect</th><th>Description</th><th>Key Parameters</th></tr>
+                <tr>
+                    <td><code>EQ</code></td>
+                    <td>10-band parametric equalizer</td>
+                    <td>Per-band gain, built-in presets (Flat, Classical, Vocal Boost), custom presets</td>
+                </tr>
+                <tr>
+                    <td><code>Reverb</code></td>
+                    <td>Convolution reverb with 13 room types</td>
+                    <td>Preset (Small Room, Large Hall, Cathedral, Plate, etc.), Wet/Dry mix</td>
+                </tr>
+                <tr>
+                    <td><code>Delay</code></td>
+                    <td>Stereo delay with feedback</td>
+                    <td>Delay time, Feedback, Wet/Dry mix, Low-pass cutoff</td>
+                </tr>
+                <tr>
+                    <td><code>Pitch / Speed</code></td>
+                    <td>Independent pitch shift and tempo change</td>
+                    <td>Pitch (&minus;2400 to +2400 cents), Rate (0.5x to 2.0x)</td>
+                </tr>
+            </table>
+
+            <!-- ── AU Plugins ── -->
+            <h2 id="au-plugins">AU Plugins</h2>
+            <p>Any Audio Unit effect (<code>kAudioUnitType_Effect</code>) installed on your Mac is automatically discovered and available in the plugin picker. Orange scans for AU components at launch and watches for newly installed plugins.</p>
+
+            <h4>Supported Plugin Types</h4>
+            <p>Orange hosts <strong>AU effect plugins</strong> only (type <code>aufx</code>). Instrument plugins (<code>aumu</code>) and MIDI processors are not supported. Both Apple Silicon native and Rosetta-translated plugins work.</p>
+
+            <h3 id="plugin-ui">Plugin UI</h3>
+            <p>When you click the sliders icon on an AU slot, Orange opens the plugin's user interface in a floating panel. The panel:</p>
+            <ul>
+                <li>Uses the plugin's native <strong>CoreAudioKit</strong> view if available</li>
+                <li>Falls back to a <strong>generic parameter view</strong> with sliders for every parameter</li>
+                <li>Floats above other windows and is available in all Spaces</li>
+                <li>Can be resized, and its size follows the plugin's preferred dimensions</li>
+            </ul>
+
+            <h3 id="parameters">Parameters</h3>
+            <p>Every AU plugin exposes a parameter tree. Orange reads this tree to populate the generic parameter UI. Parameters are organized into groups (if the plugin defines them) and displayed as labeled sliders with real-time value readouts.</p>
+            <p>Each parameter has:</p>
+            <table>
+                <tr><th>Property</th><th>Description</th></tr>
+                <tr><td><code>address</code></td><td>Unique numeric identifier used for scripting access</td></tr>
+                <tr><td><code>displayName</code></td><td>Human-readable label</td></tr>
+                <tr><td><code>minValue</code> / <code>maxValue</code></td><td>Valid range for the parameter</td></tr>
+                <tr><td><code>value</code></td><td>Current value (read/write, updates in real time)</td></tr>
+            </table>
+
+            <h3 id="presets">Factory Presets</h3>
+            <p>Many AU plugins ship with factory presets. Orange can load these via the <a href="scripting.html#effects">scripting API</a>:</p>
+<pre><span style="color:#546e7a">// Load by preset number</span>
+orange.effects.loadPreset(<span style="color:#f78c6c">0</span>, <span style="color:#f78c6c">0</span>, <span style="color:#c3e88d">'factory'</span>);
+
+<span style="color:#546e7a">// Load by preset name</span>
+orange.effects.loadPreset(<span style="color:#f78c6c">0</span>, <span style="color:#c3e88d">'Warm Vocal'</span>, <span style="color:#c3e88d">'factory'</span>);</pre>
+
+            <!-- ── Persistence ── -->
+            <h2 id="persistence">State &amp; Persistence</h2>
+            <p>Orange automatically saves and restores the complete state of your effect chain:</p>
+            <ul>
+                <li><strong>Chain configuration</strong> (which slots are filled, effect types, order, bypass state) is saved as JSON</li>
+                <li><strong>AU plugin state</strong> (all parameter values + any internal plugin data) is saved as a binary property list per plugin instance</li>
+                <li>Everything is stored in <code>~/Library/Application Support/OrangeMusicPlayer/</code></li>
+            </ul>
+            <p>When you relaunch Orange, your entire effect chain &mdash; including all AU plugin settings &mdash; is restored exactly as you left it.</p>
+
+            <h4>Storage Locations</h4>
+            <table>
+                <tr><th>Data</th><th>Format</th><th>Path</th></tr>
+                <tr>
+                    <td>Chain config</td>
+                    <td>JSON</td>
+                    <td><code>EffectChains/Default.json</code></td>
+                </tr>
+                <tr>
+                    <td>AU plugin states</td>
+                    <td>Binary plist</td>
+                    <td><code>PluginPresets/&lt;uuid&gt;.plist</code></td>
+                </tr>
+            </table>
+
+            <!-- ── Combined Presets ── -->
+            <h2 id="combined-presets">Combined Presets</h2>
+            <p>Orange includes a combined preset system that captures the state of all built-in effects at once. These let you switch between complete effect configurations instantly.</p>
+
+            <h4>Built-In Presets</h4>
+            <table>
+                <tr><th>Preset</th><th>Description</th></tr>
+                <tr><td>Slowed + Reverb</td><td>Slowed tempo with large hall reverb for a dreamy aesthetic</td></tr>
+                <tr><td>Concert Hall</td><td>Simulates a live concert hall environment</td></tr>
+                <tr><td>Bathroom Singer</td><td>Tight room reverb with slight echo</td></tr>
+                <tr><td>Nightcore</td><td>Increased pitch and tempo for the Nightcore effect</td></tr>
+                <tr><td>Practice Slow</td><td>Reduced speed without pitch change for learning songs</td></tr>
+                <tr><td>Echo Chamber</td><td>Heavy delay and feedback for atmospheric listening</td></tr>
+            </table>
+
+            <p>You can also save your own custom presets. Custom presets capture the full state of EQ, Reverb, Delay, and Pitch/Speed settings.</p>
+
+            <div class="callout">
+                <p>Combined presets capture built-in effects only. AU plugin states are saved independently per slot and persist automatically across sessions.</p>
+            </div>
+
+            <!-- ── Scripting ── -->
+            <h2 id="scripting">Scripting Integration</h2>
+            <p>The entire effect chain is accessible from the <a href="scripting.html">JavaScript scripting API</a> via <code>orange.effects</code>. You can inspect the chain, toggle bypass, read and write parameters, and load factory presets programmatically.</p>
+
+<pre><span style="color:#546e7a">// Inspect the chain</span>
+<span style="color:#c792ea">var</span> slots = orange.effects.chain();
+<span style="color:#c792ea">for</span> (<span style="color:#c792ea">var</span> i = <span style="color:#f78c6c">0</span>; i < slots.length; i++) {
+    <span style="color:#c792ea">if</span> (slots[i]) {
+        console.log(
+            <span style="color:#c3e88d">'Slot '</span> + i + <span style="color:#c3e88d">': '</span> + slots[i].name +
+            <span style="color:#c3e88d">' ('</span> + slots[i].manufacturer + <span style="color:#c3e88d">')'</span> +
+            (slots[i].isBypassed ? <span style="color:#c3e88d">' [BYPASSED]'</span> : <span style="color:#c3e88d">''</span>)
+        );
+    }
+}
+
+<span style="color:#546e7a">// Toggle bypass on slot 0</span>
+orange.effects.bypass(<span style="color:#f78c6c">0</span>, <span style="color:#c792ea">true</span>);
+
+<span style="color:#546e7a">// Tweak a parameter (slot index, param address, value)</span>
+orange.effects.setParameter(<span style="color:#f78c6c">1</span>, <span style="color:#f78c6c">100</span>, <span style="color:#f78c6c">0.75</span>);
+
+<span style="color:#546e7a">// Read a parameter</span>
+<span style="color:#c792ea">var</span> val = orange.effects.getParameter(<span style="color:#f78c6c">1</span>, <span style="color:#f78c6c">100</span>);
+console.log(<span style="color:#c3e88d">'Param 100 = '</span> + val);</pre>
+
+            <p>See the full <a href="scripting.html#effects">effects scripting reference</a> for details on all available methods.</p>
+
+        </main>
+    </div>
+</div>
+
+<!-- ── Footer ── -->
+<footer>
+    <div class="container">
+        <div class="footer-grid">
+            <div class="footer-copy">&copy; 2026 Cristi Paraschiv. All rights reserved.</div>
+            <div class="footer-links">
+                <a href="privacy.html">Privacy</a>
+                <a href="support.html">Support</a>
+                <a href="https://github.com/nicorescu/Orange-Music-Player" target="_blank">GitHub</a>
+            </div>
+        </div>
+    </div>
+</footer>
+
+</body>
+</html>

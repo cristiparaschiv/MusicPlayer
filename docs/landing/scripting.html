@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scripting API — Orange Music Player</title>
+    <meta name="description" content="Automate your music library with JavaScript. Orange Music Player's scripting API gives you full control over playback, playlists, effects, and more.">
+    <link rel="icon" type="image/png" href="../../orange-music-player-icon-2.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&family=Playfair+Display:ital,wght@0,700;1,400&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --mandarin: #FF6600;
+            --mandarin-glow: rgba(255, 102, 0, 0.15);
+            --amber: #FFB300;
+            --gunmetal: #1A1A1A;
+            --obsidian: #0A0A0A;
+            --silver: #E5E5E5;
+            --muted: #777777;
+            --pitch: #000000;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html {
+            scroll-behavior: smooth;
+            background: var(--pitch);
+            color: var(--silver);
+        }
+
+        body {
+            font-family: 'DM Sans', sans-serif;
+            font-weight: 400;
+            line-height: 1.6;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .display { font-family: 'Playfair Display', serif; }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 clamp(24px, 5vw, 80px);
+        }
+
+        /* ── Navigation ── */
+        nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+            padding: 20px 0;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+        }
+        nav .container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+            color: var(--silver);
+        }
+        .nav-brand span {
+            font-weight: 700;
+            font-size: 15px;
+            letter-spacing: -0.02em;
+        }
+        .nav-brand span em {
+            font-style: normal;
+            color: var(--mandarin);
+        }
+        .nav-links { display: flex; gap: 32px; align-items: center; }
+        .nav-links a {
+            color: var(--muted);
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+            transition: color 0.3s;
+        }
+        .nav-links a:hover { color: var(--silver); }
+        .nav-links a.active { color: var(--mandarin); }
+        .nav-cta {
+            background: var(--mandarin) !important;
+            color: var(--pitch) !important;
+            padding: 10px 24px;
+            border-radius: 8px;
+            font-weight: 700 !important;
+            font-size: 13px !important;
+            transition: transform 0.2s, box-shadow 0.3s !important;
+        }
+        .nav-cta:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 30px rgba(255, 102, 0, 0.3);
+        }
+
+        /* ── Page Header ── */
+        .page-header {
+            padding: 160px 0 80px;
+            position: relative;
+            overflow: hidden;
+        }
+        .page-header::before {
+            content: '';
+            position: absolute;
+            top: -30%;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 700px;
+            height: 700px;
+            background: radial-gradient(circle, rgba(255, 102, 0, 0.06) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        .page-header .section-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--amber);
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            margin-bottom: 16px;
+        }
+        .page-header h1 {
+            font-family: 'Playfair Display', serif;
+            font-size: clamp(36px, 5vw, 60px);
+            font-weight: 700;
+            line-height: 1.1;
+            letter-spacing: -0.02em;
+            margin-bottom: 20px;
+        }
+        .page-header h1 .orange { color: var(--mandarin); }
+        .page-header .lead {
+            font-size: 18px;
+            color: var(--muted);
+            max-width: 600px;
+            line-height: 1.7;
+        }
+
+        /* ── Docs Layout ── */
+        .docs-layout {
+            display: grid;
+            grid-template-columns: 220px 1fr;
+            gap: 60px;
+            padding-bottom: 120px;
+        }
+
+        /* ── Sidebar TOC ── */
+        .toc {
+            position: sticky;
+            top: 100px;
+            align-self: start;
+        }
+        .toc h4 {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            color: var(--mandarin);
+            margin-bottom: 16px;
+        }
+        .toc a {
+            display: block;
+            color: var(--muted);
+            text-decoration: none;
+            font-size: 13px;
+            padding: 6px 0;
+            border-left: 2px solid transparent;
+            padding-left: 12px;
+            transition: color 0.2s, border-color 0.2s;
+        }
+        .toc a:hover {
+            color: var(--silver);
+            border-left-color: rgba(255, 255, 255, 0.1);
+        }
+        .toc a.sub {
+            padding-left: 24px;
+            font-size: 12px;
+        }
+
+        /* ── Content ── */
+        .docs-content h2 {
+            font-family: 'Playfair Display', serif;
+            font-size: 32px;
+            font-weight: 700;
+            margin: 64px 0 16px;
+            padding-top: 24px;
+            border-top: 1px solid rgba(255, 255, 255, 0.04);
+        }
+        .docs-content h2:first-child {
+            margin-top: 0;
+            border-top: none;
+            padding-top: 0;
+        }
+        .docs-content h3 {
+            font-size: 20px;
+            font-weight: 700;
+            margin: 36px 0 12px;
+            color: var(--silver);
+        }
+        .docs-content h4 {
+            font-size: 15px;
+            font-weight: 700;
+            margin: 24px 0 8px;
+            color: var(--silver);
+        }
+        .docs-content p {
+            color: var(--muted);
+            font-size: 15px;
+            line-height: 1.8;
+            margin-bottom: 16px;
+        }
+        .docs-content ul, .docs-content ol {
+            color: var(--muted);
+            font-size: 15px;
+            line-height: 1.8;
+            margin-bottom: 16px;
+            padding-left: 24px;
+        }
+        .docs-content li { margin-bottom: 4px; }
+        .docs-content a {
+            color: var(--mandarin);
+            text-decoration: none;
+        }
+        .docs-content a:hover { text-decoration: underline; }
+
+        /* ── Code Blocks ── */
+        pre {
+            background: var(--gunmetal);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 10px;
+            padding: 20px 24px;
+            overflow-x: auto;
+            margin-bottom: 24px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            line-height: 1.7;
+            color: var(--silver);
+        }
+        code {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9em;
+        }
+        p code, li code {
+            background: rgba(255, 255, 255, 0.06);
+            padding: 2px 7px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            color: var(--amber);
+        }
+
+        .code-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--mandarin);
+            margin-bottom: 8px;
+            display: block;
+        }
+
+        /* ── API Method ── */
+        .method {
+            background: rgba(255, 255, 255, 0.015);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            border-radius: 10px;
+            padding: 20px 24px;
+            margin-bottom: 16px;
+        }
+        .method-sig {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
+            color: var(--silver);
+            margin-bottom: 8px;
+        }
+        .method-sig .fn { color: var(--mandarin); }
+        .method-sig .param { color: var(--amber); }
+        .method-sig .type { color: var(--muted); }
+        .method p {
+            margin-bottom: 0;
+            font-size: 14px;
+        }
+
+        /* ── Table ── */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 24px;
+            font-size: 14px;
+        }
+        th {
+            text-align: left;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--mandarin);
+            padding: 10px 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        td {
+            padding: 10px 16px;
+            color: var(--muted);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+        }
+        td code {
+            color: var(--amber);
+        }
+
+        /* ── Example Card ── */
+        .example-card {
+            border: 1px solid rgba(255, 102, 0, 0.15);
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 32px;
+        }
+        .example-header {
+            background: rgba(255, 102, 0, 0.06);
+            padding: 16px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .example-header h4 {
+            margin: 0;
+            font-size: 15px;
+            color: var(--silver);
+        }
+        .example-header .badge {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--mandarin);
+            border: 1px solid rgba(255, 102, 0, 0.3);
+            padding: 4px 10px;
+            border-radius: 100px;
+        }
+        .example-card pre {
+            margin: 0;
+            border: none;
+            border-radius: 0;
+        }
+        .example-desc {
+            padding: 16px 24px;
+            border-top: 1px solid rgba(255, 255, 255, 0.04);
+        }
+        .example-desc p { margin-bottom: 0; }
+
+        /* ── Syntax highlighting ── */
+        .kw { color: #c792ea; }
+        .str { color: #c3e88d; }
+        .fn-call { color: #82aaff; }
+        .cmt { color: #546e7a; }
+        .num { color: #f78c6c; }
+
+        /* ── Footer ── */
+        footer {
+            border-top: 1px solid rgba(255, 255, 255, 0.04);
+            padding: 48px 0;
+        }
+        .footer-grid {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .footer-copy {
+            font-size: 13px;
+            color: var(--muted);
+        }
+        .footer-links { display: flex; gap: 24px; }
+        .footer-links a {
+            font-size: 13px;
+            color: var(--muted);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+        .footer-links a:hover { color: var(--silver); }
+
+        /* ── Responsive ── */
+        @media (max-width: 900px) {
+            .docs-layout {
+                grid-template-columns: 1fr;
+            }
+            .toc { display: none; }
+            .nav-links { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- ── Navigation ── -->
+<nav>
+    <div class="container">
+        <a href="index.html" class="nav-brand">
+            <img src="../../orange-music-player-icon-2.png" alt="Orange Music Player" width="44" height="44" style="border-radius: 10px;">
+            <span><em>Orange</em> Music Player</span>
+        </a>
+        <div class="nav-links">
+            <a href="index.html#features">Features</a>
+            <a href="audio-units.html">Audio Units</a>
+            <a href="scripting.html" class="active">Scripting</a>
+            <a href="support.html">Support</a>
+            <a href="index.html#download" class="nav-cta">Download Free</a>
+        </div>
+    </div>
+</nav>
+
+<!-- ── Header ── -->
+<section class="page-header">
+    <div class="container">
+        <div class="section-label">Scripting API</div>
+        <h1>Automate <span class="orange">everything</span></h1>
+        <p class="lead">Write JavaScript scripts to control playback, query your library, manage playlists, and react to events. Scripts run inside a sandboxed JavaScriptCore engine with full access to the <code>orange</code> API.</p>
+    </div>
+</section>
+
+<!-- ── Docs ── -->
+<div class="container">
+    <div class="docs-layout">
+        <aside class="toc">
+            <h4>Contents</h4>
+            <a href="#getting-started">Getting Started</a>
+            <a href="#metadata" class="sub">Script Metadata</a>
+            <a href="#console" class="sub">Console</a>
+            <a href="#player">orange.player</a>
+            <a href="#library">orange.library</a>
+            <a href="#playlists">orange.playlists</a>
+            <a href="#effects">orange.effects</a>
+            <a href="#events">Events</a>
+            <a href="#track-object" class="sub">Track Object</a>
+            <a href="#examples">Examples</a>
+        </aside>
+
+        <main class="docs-content">
+
+            <!-- ── Getting Started ── -->
+            <h2 id="getting-started">Getting Started</h2>
+            <p>Scripts are plain <code>.js</code> files placed in your scripts folder:</p>
+<pre>~/Library/Application Support/OrangeMusicPlayer/Scripts/</pre>
+            <p>Open the folder from the menu bar: <strong>Scripts &rarr; Open Scripts Folder</strong>. Orange detects new and changed scripts automatically &mdash; no restart needed.</p>
+            <p>To run an on-demand script, use the <strong>Scripts</strong> menu or the Scripts panel in the sidebar. Event-driven scripts run automatically when their trigger fires.</p>
+
+            <h3 id="metadata">Script Metadata</h3>
+            <p>Add a comment block at the top of your script to declare metadata:</p>
+<pre><span class="cmt">// @name       My Script</span>
+<span class="cmt">// @description What it does</span>
+<span class="cmt">// @author     Your Name</span>
+<span class="cmt">// @event      trackChanged</span></pre>
+
+            <table>
+                <tr><th>Tag</th><th>Required</th><th>Description</th></tr>
+                <tr><td><code>@name</code></td><td>No</td><td>Display name. Falls back to the filename.</td></tr>
+                <tr><td><code>@description</code></td><td>No</td><td>Short description shown in the Scripts panel.</td></tr>
+                <tr><td><code>@author</code></td><td>No</td><td>Author name.</td></tr>
+                <tr><td><code>@event</code></td><td>No</td><td>Event name to auto-run on. Omit for on-demand scripts.</td></tr>
+            </table>
+
+            <h3 id="console">Console</h3>
+            <p>Use <code>console.log()</code>, <code>console.warn()</code>, and <code>console.error()</code> to send output to the Script Console. Open it with <strong>Scripts &rarr; Script Console</strong> or <kbd>Cmd+Shift+J</kbd>.</p>
+<pre>console.log(<span class="str">'Hello'</span>, <span class="str">'world'</span>);    <span class="cmt">// supports multiple arguments</span>
+console.warn(<span class="str">'Heads up!'</span>);
+console.error(<span class="str">'Something broke'</span>);</pre>
+
+            <!-- ── Player API ── -->
+            <h2 id="player">orange.player</h2>
+            <p>Control playback and read the current player state.</p>
+
+            <h4>Methods</h4>
+            <div class="method">
+                <div class="method-sig"><span class="fn">orange.player.play</span>()</div>
+                <p>Start or resume playback.</p>
+            </div>
+            <div class="method">
+                <div class="method-sig"><span class="fn">orange.player.pause</span>()</div>
+                <p>Pause playback.</p>
+            </div>
+            <div class="method">
+                <div class="method-sig"><span class="fn">orange.player.stop</span>()</div>
+                <p>Stop playback and reset position.</p>
+            </div>
+            <div class="method">
+                <div class="method-sig"><span class="fn">orange.player.next</span>()</div>
+                <p>Skip to the next track in the queue.</p>
+            </div>
+            <div class="method">
+                <div class="method-sig"><span class="fn">orange.player.previous</span>()</div>
+                <p>Go back to the previous track.</p>
+            </div>
+            <div class="method">
+                <div class="method-sig"><span class="fn">orange.player.seek</span>(<span class="param">seconds</span>)</div>
+                <p>Seek to a position in the current track (in seconds).</p>
+            </div>
+
+            <h4>Properties</h4>
+            <table>
+                <tr><th>Property</th><th>Type</th><th>Description</th></tr>
+                <tr><td><code>orange.player.currentTrack</code></td><td>Track | null</td><td>The currently playing track object.</td></tr>
+                <tr><td><code>orange.player.position</code></td><td>Number</td><td>Current playback position in seconds.</td></tr>
+                <tr><td><code>orange.player.isPlaying</code></td><td>Boolean</td><td><code>true</code> if audio is currently playing.</td></tr>
+                <tr><td><code>orange.player.volume</code></td><td>Number</td><td>Volume level (0.0 &ndash; 1.0). Read/write.</td></tr>
+            </table>
+
+<pre><span class="kw">var</span> track = orange.player.currentTrack;
+<span class="kw">if</span> (track) {
+    console.log(track.title + <span class="str">' by '</span> + track.artist);
+    console.log(<span class="str">'Position: '</span> + orange.player.position + <span class="str">'s'</span>);
+}
+
+<span class="cmt">// Set volume to 80%</span>
+orange.player.volume = <span class="num">0.8</span>;</pre>
+
+            <!-- ── Library API ── -->
+            <h2 id="library">orange.library</h2>
+            <p>Search and retrieve tracks, albums, and artists from your library.</p>
+
+            <div class="method">
+                <div class="method-sig"><span class="fn">orange.library.searchTracks</span>(<span class="param">query</span>) <span class="type">&rarr; Track[]</span></div>
+                <p>Search tracks by title, artist, or album. Pass an empty string to get all tracks.</p>
+            </div>
+            <div class="method">
+                <div class="method-sig"><span class="fn">orange.library.searchAlbums</span>(<span class="param">query</span>) <span class="type">&rarr; Album[]</span></div>
+                <p>Search albums by title or artist.</p>
+            </div>
+            <div class="method">
+                <div class="method-sig"><span class="fn">orange.library.searchArtists</span>(<span class="param">query</span>) <span class="type">&rarr; Artist[]</span></div>
+                <p>Search artists by name.</p>
+            </div>
+            <div class="method">
+                <div class="method-sig"><span class="fn">orange.library.getTrack</span>(<span class="param">id</span>) <span class="type">&rarr; Track | null</span></div>
+                <p>Get a single track by its ID.</p>
+            </div>
+            <div class="method">
+                <div class="method-sig"><span class="fn">orange.library.getAlbum</span>(<span class="param">id</span>) <span class="type">&rarr; Album | null</span></div>
+                <p>Get a single album by its ID.</p>
+            </div>
+
+            <!-- ── Playlists API ── -->
+            <h2 id="playlists">orange.playlists</h2>
+            <p>Create, delete, and manage playlists.</p>
+
+            <div class="method">
+                <div class="method-sig"><span class="fn">orange.playlists.list</span>() <span class="type">&rarr; Playlist[]</span></div>
+                <p>Get all playlists.</p>
+            </div>
+            <div class="method">
+                <div class="method-sig"><span class="fn">orange.playlists.create</span>(<span class="param">name</span>)</div>
+                <p>Create a new playlist with the given name.</p>
+            </div>
+            <div class="method">
+                <div class="method-sig"><span class="fn">orange.playlists.delete</span>(<span class="param">playlistId</span>)</div>
+                <p>Delete a playlist by its ID.</p>
+            </div>
+            <div class="method">
+                <div class="method-sig"><span class="fn">orange.playlists.addTrack</span>(<span class="param">playlistId</span>, <span class="param">trackId</span>)</div>
+                <p>Add a track to a playlist.</p>
+            </div>
+            <div class="method">
+                <div class="method-sig"><span class="fn">orange.playlists.removeTrack</span>(<span class="param">playlistId</span>, <span class="param">trackId</span>)</div>
+                <p>Remove a track from a playlist.</p>
+            </div>
+            <div class="method">
+                <div class="method-sig"><span class="fn">orange.playlists.getTracks</span>(<span class="param">playlistId</span>) <span class="type">&rarr; Track[]</span></div>
+                <p>Get all tracks in a playlist.</p>
+            </div>
+
+            <!-- ── Effects API ── -->
+            <h2 id="effects">orange.effects</h2>
+            <p>Inspect and control the audio effects chain (EQ, reverb, AU plugins).</p>
+
+            <div class="method">
+                <div class="method-sig"><span class="fn">orange.effects.chain</span>() <span class="type">&rarr; Slot[]</span></div>
+                <p>Returns an array of effect slots. Each slot has <code>type</code>, <code>name</code>, <code>manufacturer</code>, and <code>isBypassed</code>. Empty slots are <code>null</code>.</p>
+            </div>
+            <div class="method">
+                <div class="method-sig"><span class="fn">orange.effects.bypass</span>(<span class="param">slotIndex</span>, <span class="param">bypassed</span>)</div>
+                <p>Enable or bypass an effect slot.</p>
+            </div>
+            <div class="method">
+                <div class="method-sig"><span class="fn">orange.effects.setParameter</span>(<span class="param">slotIndex</span>, <span class="param">paramAddress</span>, <span class="param">value</span>)</div>
+                <p>Set a parameter value on an AU plugin by address.</p>
+            </div>
+            <div class="method">
+                <div class="method-sig"><span class="fn">orange.effects.getParameter</span>(<span class="param">slotIndex</span>, <span class="param">paramAddress</span>) <span class="type">&rarr; Number</span></div>
+                <p>Get the current value of an AU parameter.</p>
+            </div>
+            <div class="method">
+                <div class="method-sig"><span class="fn">orange.effects.loadPreset</span>(<span class="param">slotIndex</span>, <span class="param">preset</span>, <span class="param">source</span>)</div>
+                <p>Load a factory preset by number or name. <code>source</code> must be <code>"factory"</code>.</p>
+            </div>
+
+<pre><span class="kw">var</span> slots = orange.effects.chain();
+<span class="kw">for</span> (<span class="kw">var</span> i = <span class="num">0</span>; i < slots.length; i++) {
+    <span class="kw">if</span> (slots[i]) {
+        console.log(slots[i].name + <span class="str">' — bypassed: '</span> + slots[i].isBypassed);
+    }
+}
+
+<span class="cmt">// Bypass the first effect</span>
+orange.effects.bypass(<span class="num">0</span>, <span class="kw">true</span>);
+
+<span class="cmt">// Load factory preset #0 on slot 1</span>
+orange.effects.loadPreset(<span class="num">1</span>, <span class="num">0</span>, <span class="str">'factory'</span>);</pre>
+
+            <!-- ── Events ── -->
+            <h2 id="events">Events</h2>
+            <p>Register callbacks for playback and library events using <code>orange.on()</code>.</p>
+
+            <div class="method">
+                <div class="method-sig"><span class="fn">orange.on</span>(<span class="param">eventName</span>, <span class="param">callback</span>)</div>
+                <p>Register an event handler. Multiple handlers per event are supported.</p>
+            </div>
+
+            <table>
+                <tr><th>Event</th><th>Callback Argument</th><th>Fires When</th></tr>
+                <tr><td><code>trackChanged</code></td><td>Track object</td><td>A new track starts playing.</td></tr>
+                <tr><td><code>playbackStarted</code></td><td>&mdash;</td><td>Playback resumes.</td></tr>
+                <tr><td><code>playbackPaused</code></td><td>&mdash;</td><td>Playback is paused.</td></tr>
+                <tr><td><code>playbackStopped</code></td><td>&mdash;</td><td>Playback stops.</td></tr>
+                <tr><td><code>queueChanged</code></td><td>&mdash;</td><td>The playback queue is modified.</td></tr>
+                <tr><td><code>libraryUpdated</code></td><td>&mdash;</td><td>The library is rescanned.</td></tr>
+            </table>
+
+<pre>orange.on(<span class="str">'trackChanged'</span>, <span class="kw">function</span>(track) {
+    console.log(<span class="str">'Now playing: '</span> + track.title);
+});
+
+orange.on(<span class="str">'playbackPaused'</span>, <span class="kw">function</span>() {
+    console.log(<span class="str">'Paused'</span>);
+});</pre>
+
+            <p>To bind an event-driven script, add <code>@event</code> in the metadata header. The script will automatically run when that event fires, and your <code>orange.on()</code> handlers will be called.</p>
+
+            <!-- ── Track Object ── -->
+            <h3 id="track-object">Track Object</h3>
+            <p>Track objects returned by the API have these properties:</p>
+            <table>
+                <tr><th>Property</th><th>Type</th><th>Notes</th></tr>
+                <tr><td><code>id</code></td><td>Number</td><td>Unique database ID.</td></tr>
+                <tr><td><code>title</code></td><td>String</td><td>Track title.</td></tr>
+                <tr><td><code>artist</code></td><td>String</td><td>May be absent.</td></tr>
+                <tr><td><code>album</code></td><td>String</td><td>May be absent.</td></tr>
+                <tr><td><code>genre</code></td><td>String</td><td>May be absent.</td></tr>
+                <tr><td><code>duration</code></td><td>Number</td><td>Duration in seconds.</td></tr>
+                <tr><td><code>trackNumber</code></td><td>Number</td><td>May be absent.</td></tr>
+                <tr><td><code>year</code></td><td>Number</td><td>May be absent.</td></tr>
+                <tr><td><code>playCount</code></td><td>Number</td><td>Number of times played.</td></tr>
+                <tr><td><code>rating</code></td><td>Number</td><td>1&ndash;5 stars. May be absent.</td></tr>
+                <tr><td><code>isFavorite</code></td><td>Boolean</td><td>Whether the track is favorited.</td></tr>
+                <tr><td><code>filePath</code></td><td>String</td><td>Absolute file path.</td></tr>
+            </table>
+
+            <p>Album objects have: <code>id</code>, <code>title</code>, <code>artist</code>, <code>year</code>, <code>trackCount</code>.<br>
+            Artist objects have: <code>id</code>, <code>name</code>, <code>albumCount</code>, <code>trackCount</code>.<br>
+            Playlist objects have: <code>id</code>, <code>name</code>, <code>trackCount</code>.</p>
+
+            <!-- ── Examples ── -->
+            <h2 id="examples">Examples</h2>
+
+            <div class="example-card">
+                <div class="example-header">
+                    <h4>Favorites Playlist Builder</h4>
+                    <span class="badge">On-Demand</span>
+                </div>
+<pre><span class="cmt">// @name       Quick Favorites Playlist</span>
+<span class="cmt">// @description Collects all favorited tracks into a new playlist</span>
+<span class="cmt">// @author     Orange Music Player</span>
+
+<span class="kw">var</span> allTracks = orange.library.searchTracks(<span class="str">''</span>);
+<span class="kw">var</span> favorites = [];
+
+<span class="kw">for</span> (<span class="kw">var</span> i = <span class="num">0</span>; i < allTracks.length; i++) {
+    <span class="kw">if</span> (allTracks[i].isFavorite) {
+        favorites.push(allTracks[i]);
+    }
+}
+
+console.log(<span class="str">'Found '</span> + favorites.length + <span class="str">' favorite tracks'</span>);
+
+<span class="kw">if</span> (favorites.length > <span class="num">0</span>) {
+    orange.playlists.create(<span class="str">'My Favorites (Script)'</span>);
+
+    <span class="cmt">// Find the newly created playlist</span>
+    <span class="kw">var</span> playlists = orange.playlists.list();
+    <span class="kw">var</span> target = <span class="kw">null</span>;
+    <span class="kw">for</span> (<span class="kw">var</span> j = <span class="num">0</span>; j < playlists.length; j++) {
+        <span class="kw">if</span> (playlists[j].name === <span class="str">'My Favorites (Script)'</span>) {
+            target = playlists[j];
+        }
+    }
+
+    <span class="kw">if</span> (target) {
+        <span class="kw">for</span> (<span class="kw">var</span> k = <span class="num">0</span>; k < favorites.length; k++) {
+            orange.playlists.addTrack(target.id, favorites[k].id);
+        }
+        console.log(<span class="str">'Added '</span> + favorites.length + <span class="str">' tracks to playlist'</span>);
+    }
+}</pre>
+                <div class="example-desc">
+                    <p>Run this from the Scripts menu. It scans your entire library for favorited tracks and creates a playlist containing them all.</p>
+                </div>
+            </div>
+
+            <div class="example-card">
+                <div class="example-header">
+                    <h4>Genre Logger</h4>
+                    <span class="badge">Event-Driven</span>
+                </div>
+<pre><span class="cmt">// @name       Genre Logger</span>
+<span class="cmt">// @description Logs genre info every time the track changes</span>
+<span class="cmt">// @author     Orange Music Player</span>
+<span class="cmt">// @event      trackChanged</span>
+
+orange.on(<span class="str">'trackChanged'</span>, <span class="kw">function</span>(track) {
+    <span class="kw">if</span> (!track) <span class="kw">return</span>;
+
+    <span class="kw">var</span> genre = track.genre || <span class="str">'Unknown'</span>;
+    console.log(track.title + <span class="str">' ['</span> + genre + <span class="str">'] by '</span> + (track.artist || <span class="str">'Unknown'</span>));
+
+    <span class="cmt">// Detect jazz and log something fun</span>
+    <span class="kw">if</span> (genre.toLowerCase().indexOf(<span class="str">'jazz'</span>) !== -<span class="num">1</span>) {
+        console.log(<span class="str">'Jazz detected! Smooth listening ahead.'</span>);
+    }
+});</pre>
+                <div class="example-desc">
+                    <p>This script runs automatically every time a new track starts playing. It logs the genre to the Script Console, with a special message for jazz tracks. Use <kbd>Cmd+Shift+J</kbd> to open the console and watch the output.</p>
+                </div>
+            </div>
+
+            <div class="example-card">
+                <div class="example-header">
+                    <h4>Top Played Playlist</h4>
+                    <span class="badge">On-Demand</span>
+                </div>
+<pre><span class="cmt">// @name       Top 20 Most Played</span>
+<span class="cmt">// @description Creates a playlist from your 20 most-played tracks</span>
+<span class="cmt">// @author     Orange Music Player</span>
+
+<span class="kw">var</span> all = orange.library.searchTracks(<span class="str">''</span>);
+
+<span class="cmt">// Sort by play count descending</span>
+all.sort(<span class="kw">function</span>(a, b) { <span class="kw">return</span> b.playCount - a.playCount; });
+
+<span class="kw">var</span> top = all.slice(<span class="num">0</span>, <span class="num">20</span>);
+console.log(<span class="str">'Top track: '</span> + top[<span class="num">0</span>].title + <span class="str">' ('</span> + top[<span class="num">0</span>].playCount + <span class="str">' plays)'</span>);
+
+orange.playlists.create(<span class="str">'Top 20 Most Played'</span>);
+
+<span class="kw">var</span> playlists = orange.playlists.list();
+<span class="kw">var</span> target = <span class="kw">null</span>;
+<span class="kw">for</span> (<span class="kw">var</span> i = <span class="num">0</span>; i < playlists.length; i++) {
+    <span class="kw">if</span> (playlists[i].name === <span class="str">'Top 20 Most Played'</span>) {
+        target = playlists[i];
+    }
+}
+
+<span class="kw">if</span> (target) {
+    <span class="kw">for</span> (<span class="kw">var</span> i = <span class="num">0</span>; i < top.length; i++) {
+        orange.playlists.addTrack(target.id, top[i].id);
+    }
+    console.log(<span class="str">'Created playlist with '</span> + top.length + <span class="str">' tracks'</span>);
+}</pre>
+                <div class="example-desc">
+                    <p>Sorts your entire library by play count and builds a playlist of your 20 most-listened tracks. Run it periodically to keep an up-to-date "heavy rotation" list.</p>
+                </div>
+            </div>
+
+        </main>
+    </div>
+</div>
+
+<!-- ── Footer ── -->
+<footer>
+    <div class="container">
+        <div class="footer-grid">
+            <div class="footer-copy">&copy; 2026 Cristi Paraschiv. All rights reserved.</div>
+            <div class="footer-links">
+                <a href="privacy.html">Privacy</a>
+                <a href="support.html">Support</a>
+                <a href="https://github.com/nicorescu/Orange-Music-Player" target="_blank">GitHub</a>
+            </div>
+        </div>
+    </div>
+</footer>
+
+</body>
+</html>
