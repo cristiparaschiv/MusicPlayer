@@ -81,6 +81,9 @@ struct ContentView: View {
                                     PlaylistView(playlist: playlist)
                                         .id(playlist.id)
                                         .navigationTitle(playlist.name)
+                                case .recentlyOpened:
+                                    RecentlyOpenedView()
+                                        .navigationTitle("Recently Opened")
                                 case .scripts:
                                     ScriptsView()
                                         .navigationTitle("Scripts")
@@ -227,27 +230,21 @@ struct ContentView: View {
     }
 
     private func handleFileDrop(_ providers: [NSItemProvider]) {
+        var urls: [URL] = []
+        let group = DispatchGroup()
+
         for provider in providers {
-            provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { item, _ in
-                guard let data = item as? Data,
+            group.enter()
+            provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { data, _ in
+                defer { group.leave() }
+                guard let data = data as? Data,
                       let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
-
-                var isDirectory: ObjCBool = false
-                FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
-
-                if isDirectory.boolValue {
-                    // Folder dropped — add as library path
-                    DispatchQueue.main.async {
-                        MediaScannerManager.shared.addLibraryPath(url.path)
-                    }
-                } else {
-                    // Single file — add its parent folder
-                    let parentDir = url.deletingLastPathComponent().path
-                    DispatchQueue.main.async {
-                        MediaScannerManager.shared.addLibraryPath(parentDir)
-                    }
-                }
+                urls.append(url)
             }
+        }
+
+        group.notify(queue: .global(qos: .userInitiated)) {
+            ExternalTrackManager.shared.importURLs(urls)
         }
     }
 

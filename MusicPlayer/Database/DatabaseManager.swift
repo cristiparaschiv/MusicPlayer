@@ -191,6 +191,44 @@ class DatabaseManager {
         );
         """
 
+        let createExternalTracksTable = """
+        CREATE TABLE IF NOT EXISTS external_tracks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            title_sort TEXT NOT NULL,
+            artist_name TEXT,
+            album_title TEXT,
+            album_artist_name TEXT,
+            track_number INTEGER,
+            disc_number INTEGER,
+            year INTEGER,
+            genre_name TEXT,
+            composer_name TEXT,
+            duration REAL NOT NULL,
+            bitrate INTEGER,
+            sample_rate INTEGER,
+            channel_count INTEGER,
+            bit_depth INTEGER,
+            format_name TEXT,
+            file_path TEXT NOT NULL,
+            file_size INTEGER NOT NULL,
+            date_added REAL NOT NULL,
+            has_artwork INTEGER DEFAULT 0,
+            lyrics TEXT,
+            replay_gain_track REAL,
+            replay_gain_album REAL
+        );
+        """
+
+        let createExternalPlaylistTracksTable = """
+        CREATE TABLE IF NOT EXISTS external_playlist_tracks (
+            track_id INTEGER NOT NULL,
+            position INTEGER NOT NULL,
+            date_added REAL NOT NULL,
+            FOREIGN KEY(track_id) REFERENCES external_tracks(id) ON DELETE CASCADE
+        );
+        """
+
         let tables = [
             createArtistsTable,
             createGenresTable,
@@ -201,7 +239,9 @@ class DatabaseManager {
             createPlaylistTracksTable,
             createLibraryPathsTable,
             createPlayHistoryTable,
-            createScrobbleQueueTable
+            createScrobbleQueueTable,
+            createExternalTracksTable,
+            createExternalPlaylistTracksTable
         ]
 
         for sql in tables {

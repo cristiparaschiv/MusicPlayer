@@ -54,6 +54,9 @@ struct Sidebar: View {
                     NavigationLink(value: SidebarItem.stats) {
                         Label("Statistics", systemImage: "chart.bar.fill")
                     }
+                    NavigationLink(value: SidebarItem.recentlyOpened) {
+                        Label("Recently Opened", systemImage: "arrow.down.doc")
+                    }
                 }
 
                 Section("Tools") {

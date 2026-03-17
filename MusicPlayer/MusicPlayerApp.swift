@@ -51,6 +51,9 @@ struct MusicPlayerApp: App {
             ContentView()
                 .frame(minWidth: 1000, minHeight: 600)
                 .preferredColorScheme(colorScheme)
+                .onOpenURL { url in
+                    ExternalTrackManager.shared.importURLs([url])
+                }
         }
         .defaultSize(width: 1200, height: 800)
         .commands {

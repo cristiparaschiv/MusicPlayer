@@ -291,6 +291,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026 Cristi Paraschiv. All rights reserved.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Orange Music Player uses the local network to allow remote control from other devices on your network.";
+				INFOPLIST_KEY_CFBundleDocumentTypes = "({\n    CFBundleTypeName = \"Audio Files\";\n    CFBundleTypeRole = Viewer;\n    LSHandlerRank = Alternate;\n    LSItemContentTypes = (\"public.audio\");\n})";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -336,6 +337,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026 Cristi Paraschiv. All rights reserved.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Orange Music Player uses the local network to allow remote control from other devices on your network.";
+				INFOPLIST_KEY_CFBundleDocumentTypes = "({\n    CFBundleTypeName = \"Audio Files\";\n    CFBundleTypeRole = Viewer;\n    LSHandlerRank = Alternate;\n    LSItemContentTypes = (\"public.audio\");\n})";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

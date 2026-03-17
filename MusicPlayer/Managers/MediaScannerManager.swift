@@ -41,7 +41,7 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
     @Published var pathStatuses: [LibraryPathStatus] = []
     
     // Supported audio file extensions
-    private let supportedExtensions: Set<String> = [
+    let supportedExtensions: Set<String> = [
         "mp3", "m4a", "aac", "flac", "alac", "wav", "aiff", "aif",
         "ogg", "opus", "wma", "ape", "dsf", "dff", "wv", "mpc", "caf"
     ]
@@ -563,7 +563,7 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
         return extractMetadata(from: url)
     }
 
-    private func extractMetadata(from url: URL) -> AudioMetadata? {
+    func extractMetadata(from url: URL) -> AudioMetadata? {
         // Get file attributes first
         guard let fileAttributes = try? FileManager.default.attributesOfItem(atPath: url.path),
               let fileSize = fileAttributes[.size] as? Int64,
@@ -670,7 +670,7 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
         return metadata
     }
 
-    private func extractYear(from dateString: String) -> Int? {
+    func extractYear(from dateString: String) -> Int? {
         for formatter in Self.yearFormatters {
             if let date = formatter.date(from: dateString) {
                 return Calendar.current.component(.year, from: date)

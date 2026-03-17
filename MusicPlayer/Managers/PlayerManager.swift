@@ -674,6 +674,20 @@ class PlayerManager: NSObject {
     private func playTrack(_ track: Track) {
         // Must be called from playerQueue
 
+        guard FileManager.default.fileExists(atPath: track.filePath) else {
+            #if DEBUG
+            print("Skipping missing file: \(track.filePath)")
+            #endif
+            DispatchQueue.main.async {
+                if let nextTrack = QueueManager.shared.next() {
+                    self.play(track: nextTrack)
+                } else {
+                    self.stop()
+                }
+            }
+            return
+        }
+
         seekingDisabledForCurrentTrack = false
 
         // Finalize stats for the track we're leaving
