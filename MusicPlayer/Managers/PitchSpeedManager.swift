@@ -50,6 +50,14 @@ class PitchSpeedManager: ObservableObject {
         nodesLock.unlock()
     }
 
+    /// Returns the active time pitch node for the given engine, if one exists.
+    func node(for engine: AVAudioEngine) -> AVAudioNode? {
+        let key = ObjectIdentifier(engine)
+        nodesLock.lock()
+        defer { nodesLock.unlock() }
+        return activeNodes[key]
+    }
+
     func reset() {
         pitch = 0
         rate = 1.0

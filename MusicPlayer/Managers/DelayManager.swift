@@ -72,6 +72,14 @@ class DelayManager: ObservableObject {
         nodesLock.unlock()
     }
 
+    /// Returns the active delay node for the given engine, if one exists.
+    func node(for engine: AVAudioEngine) -> AVAudioNode? {
+        let key = ObjectIdentifier(engine)
+        nodesLock.lock()
+        defer { nodesLock.unlock() }
+        return activeNodes[key]
+    }
+
     func reset() {
         delayTime = 0.5
         feedback = 50

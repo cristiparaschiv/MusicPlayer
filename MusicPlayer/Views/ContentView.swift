@@ -81,6 +81,9 @@ struct ContentView: View {
                                     PlaylistView(playlist: playlist)
                                         .id(playlist.id)
                                         .navigationTitle(playlist.name)
+                                case .scripts:
+                                    ScriptsView()
+                                        .navigationTitle("Scripts")
                                 case .none:
                                     Text("Select something from the sidebar")
                                         .foregroundStyle(.secondary)

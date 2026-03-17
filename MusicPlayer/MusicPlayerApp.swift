@@ -26,6 +26,12 @@ struct MusicPlayerApp: App {
         // Start remote control server if enabled
         RemoteServerManager.shared.startIfEnabled()
 
+        // Initialize scripting engine
+        ScriptingEngine.shared.start()
+
+        // Initialize script console window manager
+        _ = ScriptConsoleWindowManager.shared
+
         // Use overlay (thin, auto-hiding) scrollbars globally
         UserDefaults.standard.set("WhenScrolling", forKey: "AppleShowScrollBars")
     }
@@ -49,6 +55,7 @@ struct MusicPlayerApp: App {
         .defaultSize(width: 1200, height: 800)
         .commands {
             PlaybackCommands()
+            ScriptsCommands()
         }
 
         Settings {
@@ -122,6 +129,37 @@ struct PlaybackCommands: Commands {
                 ImmersiveWindowManager.shared.toggle()
             }
             .keyboardShortcut("f", modifiers: [.command, .shift])
+        }
+    }
+}
+
+// MARK: - Scripts Commands
+
+struct ScriptsCommands: Commands {
+    @ObservedObject private var engine = ScriptingEngine.shared
+
+    var body: some Commands {
+        CommandMenu("Scripts") {
+            ForEach(engine.scripts.filter { $0.isEnabled && $0.event == nil }) { script in
+                Button(script.name) {
+                    engine.runScript(id: script.id)
+                }
+            }
+
+            if !engine.scripts.filter({ $0.isEnabled && $0.event == nil }).isEmpty {
+                Divider()
+            }
+
+            Button("Open Scripts Folder") {
+                engine.openScriptsFolder()
+            }
+
+            Divider()
+
+            Button("Script Console") {
+                ScriptConsoleWindowManager.shared.toggle()
+            }
+            .keyboardShortcut("j", modifiers: [.command, .shift])
         }
     }
 }

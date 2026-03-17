@@ -73,6 +73,14 @@ class EQManager: ObservableObject {
         return node
     }
 
+    /// Returns the active EQ node for the given engine, if one exists.
+    func node(for engine: AVAudioEngine) -> AVAudioNode? {
+        let key = ObjectIdentifier(engine)
+        nodesLock.lock()
+        defer { nodesLock.unlock() }
+        return activeNodes[key]
+    }
+
     /// Removes tracking for an engine's EQ node (call when player is disposed).
     func removeEQNode(for engine: AVAudioEngine) {
         let key = ObjectIdentifier(engine)

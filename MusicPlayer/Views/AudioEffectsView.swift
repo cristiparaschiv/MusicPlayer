@@ -1,31 +1,67 @@
 import SwiftUI
 
 struct AudioEffectsView: View {
-    @State private var selectedTab = 0
+    @State private var expandedSlotIndex: Int? = nil
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            EQView()
-                .tabItem { Label("Equalizer", systemImage: "slider.vertical.3") }
-                .tag(0)
+        HSplitView {
+            // Left: Effect chain
+            EffectChainView(expandedSlotIndex: $expandedSlotIndex)
+                .frame(minWidth: 220, idealWidth: 240, maxWidth: 280)
 
-            ReverbView()
-                .tabItem { Label("Reverb", systemImage: "waveform.path") }
-                .tag(1)
-
-            DelayView()
-                .tabItem { Label("Delay", systemImage: "repeat") }
-                .tag(2)
-
-            PitchSpeedView()
-                .tabItem { Label("Pitch/Speed", systemImage: "metronome") }
-                .tag(3)
-
-            AudioEffectsPresetsView()
-                .tabItem { Label("Presets", systemImage: "list.bullet") }
-                .tag(4)
+            // Right: Detail panel
+            detailPane
+                .frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: 520, height: 380)
+        .frame(width: 700, height: 400)
+    }
+
+    @ViewBuilder
+    private var detailPane: some View {
+        if let index = expandedSlotIndex,
+           let slot = EffectChainManager.shared.slots[index] {
+            switch slot.slotType {
+            case .eq:
+                EQView()
+            case .reverb:
+                ReverbView()
+            case .delay:
+                DelayView()
+            case .timePitch:
+                PitchSpeedView()
+            case .auPlugin:
+                auPluginPlaceholder
+            }
+        } else {
+            emptyDetailPlaceholder
+        }
+    }
+
+    private var emptyDetailPlaceholder: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 32))
+                .foregroundStyle(.secondary)
+            Text("Select an effect slot")
+                .foregroundStyle(.secondary)
+                .font(.callout)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var auPluginPlaceholder: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "puzzlepiece")
+                .font(.system(size: 32))
+                .foregroundStyle(.secondary)
+            Text("Open floating panel to edit")
+                .foregroundStyle(.secondary)
+                .font(.callout)
+            Text("Click the plugin slot to open its UI window")
+                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                .font(.caption)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

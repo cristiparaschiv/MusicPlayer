@@ -52,6 +52,11 @@ class PlayerManager: NSObject {
 
     // MARK: - Public Properties
 
+    /// The AVAudioEngine of the currently active player, for UI access (e.g. AU plugin editors).
+    var currentEngine: AVAudioEngine? {
+        audioPlayer?.audioEngine
+    }
+
     var playbackState: PlaybackState {
         stateLock.lock()
         defer { stateLock.unlock() }
@@ -630,6 +635,7 @@ class PlayerManager: NSObject {
         ReverbManager.shared.removeNode(for: player.audioEngine)
         DelayManager.shared.removeNode(for: player.audioEngine)
         PitchSpeedManager.shared.removeNode(for: player.audioEngine)
+        EffectChainManager.shared.unregisterEngine(player.audioEngine)
 
         // Stop the player first
         player.stop()
@@ -1227,51 +1233,45 @@ extension PlayerManager: AudioPlayer.Delegate {
               let sourceNode = connectionPoint.node else { return }
         let format = mixer.inputFormat(forBus: 0)
 
-        let eqNode = EQManager.shared.createEQNode(for: engine)
-        let reverbNode = ReverbManager.shared.createNode(for: engine)
-        let delayNode = DelayManager.shared.createNode(for: engine)
-        let timePitchNode = PitchSpeedManager.shared.createNode(for: engine)
-
-        engine.attach(eqNode)
-        engine.attach(reverbNode)
-        engine.attach(delayNode)
-        engine.attach(timePitchNode)
-
-        // Rewire: sourceNode → EQ → Reverb → Delay → TimePitch → mainMixerNode
+        // Disconnect source → mixer so the chain can be inserted
         engine.disconnectNodeInput(mixer)
-        engine.connect(sourceNode, to: eqNode, format: format)
-        engine.connect(eqNode, to: reverbNode, format: format)
-        engine.connect(reverbNode, to: delayNode, format: format)
-        engine.connect(delayNode, to: timePitchNode, format: format)
-        engine.connect(timePitchNode, to: mixer, format: format)
 
-        #if DEBUG
-        print("[AudioEffects] Inserted effect chain: source → EQ → Reverb → Delay → TimePitch → Mixer (format: \(format))")
-        #endif
+        // Register this engine with the effect chain manager
+        EffectChainManager.shared.registerEngine(engine)
+
+        // Use async build if any AU plugin slots are present, otherwise sync
+        let hasAUPlugins = EffectChainManager.shared.slots.contains { $0 is AUPluginSlot }
+        if hasAUPlugins {
+            EffectChainManager.shared.buildChainAsync(for: engine, sourceNode: sourceNode, format: format) { entryNode in
+                #if DEBUG
+                let entry = entryNode != nil ? "chain entry" : "mixer (no slots)"
+                print("[AudioEffects] Async chain built: source → \(entry) (format: \(format))")
+                #endif
+            }
+        } else {
+            EffectChainManager.shared.buildChain(for: engine, sourceNode: sourceNode, format: format)
+            #if DEBUG
+            print("[AudioEffects] Sync chain built: source → chain → mixer (format: \(format))")
+            #endif
+        }
     }
 
     func audioPlayer(_ audioPlayer: AudioPlayer, reconfigureProcessingGraph engine: AVAudioEngine, with format: AVAudioFormat) -> AVAudioNode {
-        // Build chain: playerNode → EQ → Reverb → Delay → TimePitch → mainMixer
-        let eqNode = EQManager.shared.createEQNode(for: engine)
-        let reverbNode = ReverbManager.shared.createNode(for: engine)
-        let delayNode = DelayManager.shared.createNode(for: engine)
-        let timePitchNode = PitchSpeedManager.shared.createNode(for: engine)
+        // Register engine and build chain synchronously.
+        // AU plugin slots are skipped here (async instantiation not possible in this sync callback)
+        // and will be re-wired when the async buildChainAsync path is invoked later if needed.
+        EffectChainManager.shared.registerEngine(engine)
 
-        engine.attach(eqNode)
-        engine.attach(reverbNode)
-        engine.attach(delayNode)
-        engine.attach(timePitchNode)
-
-        engine.connect(eqNode, to: reverbNode, format: format)
-        engine.connect(reverbNode, to: delayNode, format: format)
-        engine.connect(delayNode, to: timePitchNode, format: format)
-        engine.connect(timePitchNode, to: engine.mainMixerNode, format: format)
+        // buildChain returns nil when no slots are configured; fall back to mainMixerNode so
+        // SFBAudioEngine has a valid node to connect the player source to.
+        let entryNode = EffectChainManager.shared.buildChain(for: engine, sourceNode: engine.inputNode, format: format)
+            ?? engine.mainMixerNode
 
         // SFBAudioEngine connects playerNode → returned node
         #if DEBUG
-        print("[AudioEffects] Chain built: EQ → Reverb → Delay → TimePitch → Mixer (format: \(format))")
+        print("[AudioEffects] reconfigureProcessingGraph: chain built (format: \(format)), entry=\(entryNode)")
         #endif
-        return eqNode
+        return entryNode
     }
 
     func audioPlayer(_ audioPlayer: AudioPlayer, encounteredError error: Error) {

@@ -28,6 +28,13 @@ struct Constants {
     static let defaultCrossfadeDuration: TimeInterval = 3.0
     static let defaultVolume: Float = 0.8
 
+    // Scripting
+    static var scriptsDirectory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("OrangeMusicPlayer")
+            .appendingPathComponent("Scripts")
+    }
+
     // User Defaults Keys
     struct UserDefaultsKeys {
         static let mediaLibraryPaths = "mediaLibraryPaths"
@@ -88,6 +95,9 @@ struct Constants {
         static let artworkDidChange = Notification.Name("artworkDidChange")
         static let radioStateChanged = Notification.Name("radioStateChanged")
         static let remoteServerStateChanged = Notification.Name("remoteServerStateChanged")
+        static let effectChainChanged = Notification.Name("effectChainChanged")
+        static let scriptsChanged = Notification.Name("scriptsChanged")
+        static let scriptConsoleToggle = Notification.Name("scriptConsoleToggle")
     }
 }
 

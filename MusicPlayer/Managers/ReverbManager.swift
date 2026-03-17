@@ -59,6 +59,14 @@ class ReverbManager: ObservableObject {
         nodesLock.unlock()
     }
 
+    /// Returns the active reverb node for the given engine, if one exists.
+    func node(for engine: AVAudioEngine) -> AVAudioNode? {
+        let key = ObjectIdentifier(engine)
+        nodesLock.lock()
+        defer { nodesLock.unlock() }
+        return activeNodes[key]
+    }
+
     func reset() {
         presetIndex = 0
         wetDryMix = 25

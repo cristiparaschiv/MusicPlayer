@@ -27,7 +27,7 @@ class AudioEffectsWindowManager {
         }
 
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 380),
+            contentRect: NSRect(x: 0, y: 0, width: 700, height: 400),
             styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel, .hudWindow],
             backing: .buffered,
             defer: false
@@ -47,8 +47,8 @@ class AudioEffectsWindowManager {
 
         if let screen = NSScreen.main {
             let screenFrame = screen.visibleFrame
-            let x = screenFrame.midX - 260
-            let y = screenFrame.midY - 190
+            let x = screenFrame.midX - 350
+            let y = screenFrame.midY - 200
             panel.setFrameOrigin(NSPoint(x: x, y: y))
         }
 

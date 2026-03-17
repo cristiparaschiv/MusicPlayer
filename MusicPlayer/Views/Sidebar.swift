@@ -56,6 +56,12 @@ struct Sidebar: View {
                     }
                 }
 
+                Section("Tools") {
+                    NavigationLink(value: SidebarItem.scripts) {
+                        Label("Scripts", systemImage: "applescript")
+                    }
+                }
+
                 Section("Playlists") {
                     // User playlists
                     ForEach(playlists, id: \.id) { playlist in
