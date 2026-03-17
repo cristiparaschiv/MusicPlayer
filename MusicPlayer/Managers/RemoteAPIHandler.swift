@@ -72,8 +72,8 @@ class RemoteAPIHandler {
 
         var dict: [String: Any] = [
             "state": np.playbackState.rawValue,
-            "currentTime": np.currentTime,
-            "duration": np.duration,
+            "currentTime": PlaybackProgressManager.shared.currentTime,
+            "duration": PlaybackProgressManager.shared.duration,
             "volume": np.volume,
             "shuffle": np.isShuffleEnabled,
             "repeat": np.repeatMode.rawValue,

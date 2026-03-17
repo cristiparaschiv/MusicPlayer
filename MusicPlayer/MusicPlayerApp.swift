@@ -54,6 +54,7 @@ struct MusicPlayerApp: App {
                 .onOpenURL { url in
                     ExternalTrackManager.shared.importURLs([url])
                 }
+                .environment(\.undoManager, UndoRedoManager.shared.undoManager)
         }
         .defaultSize(width: 1200, height: 800)
         .commands {

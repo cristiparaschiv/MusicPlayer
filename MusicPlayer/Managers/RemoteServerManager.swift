@@ -25,6 +25,22 @@ class RemoteServerManager: ObservableObject {
         }
     }
 
+    var serverToken: String {
+        let existing = UserDefaults.standard.string(forKey: "remoteControlToken") ?? ""
+        if existing.isEmpty {
+            let token = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(32)).lowercased()
+            UserDefaults.standard.set(token, forKey: "remoteControlToken")
+            return token
+        }
+        return existing
+    }
+
+    func regenerateToken() {
+        let token = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(32)).lowercased()
+        UserDefaults.standard.set(token, forKey: "remoteControlToken")
+        objectWillChange.send()
+    }
+
     private init() {
         apiHandler = RemoteAPIHandler()
     }
@@ -121,8 +137,21 @@ class RemoteServerManager: ObservableObject {
             if path == "/" || path == "/index.html" {
                 response = self.serveStaticFile("index.html", contentType: "text/html")
             } else if path.hasPrefix("/api/") {
-                response = self.apiHandler?.handleRequest(method: method, path: path, body: body)
-                    ?? (500, "application/json", Data("{\"error\":\"internal\"}".utf8))
+                // Check bearer token auth
+                let authHeader = request.components(separatedBy: "\r\n")
+                    .first(where: { $0.lowercased().hasPrefix("authorization:") })
+                let token = authHeader?
+                    .components(separatedBy: ":").dropFirst().joined(separator: ":")
+                    .trimmingCharacters(in: .whitespaces)
+                    .replacingOccurrences(of: "Bearer ", with: "")
+                    .replacingOccurrences(of: "bearer ", with: "")
+
+                if token != RemoteServerManager.shared.serverToken {
+                    response = (401, "application/json", Data("{\"error\":\"unauthorized\"}".utf8))
+                } else {
+                    response = self.apiHandler?.handleRequest(method: method, path: path, body: body)
+                        ?? (500, "application/json", Data("{\"error\":\"internal\"}".utf8))
+                }
             } else {
                 response = (404, "text/plain", Data("Not Found".utf8))
             }
@@ -146,6 +175,7 @@ class RemoteServerManager: ObservableObject {
         let statusText: String
         switch status {
         case 200: statusText = "OK"
+        case 401: statusText = "Unauthorized"
         case 404: statusText = "Not Found"
         case 400: statusText = "Bad Request"
         default: statusText = "Internal Server Error"

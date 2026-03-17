@@ -8,6 +8,7 @@ struct ArtistDetailView: View {
     @State private var showAllAlbums = false
     @State private var addedToQueueMessage: String?
     @State private var hasLoadedData = false
+    @State private var topTracks: [Track]? = nil
 
     private let artworkManager = ArtworkManager.shared
     private let trackDAO = TrackDAO()
@@ -171,7 +172,7 @@ struct ArtistDetailView: View {
                         }
 
                         // Display top tracks (only if there's actual play data)
-                        if let topTracks = getTopTracks(), !topTracks.isEmpty {
+                        if let topTracks = topTracks, !topTracks.isEmpty {
                             VStack(alignment: .leading, spacing: 12) {
                                 Text("Top Tracks")
                                     .font(.title2)
@@ -225,6 +226,12 @@ struct ArtistDetailView: View {
         .onAppear() {
             loadArtistData()
         }
+        .onReceive(NotificationCenter.default.publisher(for: Constants.Notifications.libraryDidUpdate)) { _ in
+            loadArtistData()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Constants.Notifications.trackMetadataChanged)) { _ in
+            loadArtistData()
+        }
     }
 
     private func loadArtistData() {
@@ -245,8 +252,18 @@ struct ArtistDetailView: View {
                 albums = loadedAlbums
                 tracksInfo = info
                 hasLoadedData = true
+                refreshTopTracks(from: info)
             }
         }
+    }
+
+    private func refreshTopTracks(from info: ArtistTracksInfo?) {
+        guard let info = info else {
+            topTracks = nil
+            return
+        }
+        let playedTracks = info.tracks.filter { $0.playCount > 0 }
+        topTracks = playedTracks.isEmpty ? nil : playedTracks.sorted { $0.playCount > $1.playCount }
     }
 
     private func playArtist() {
@@ -284,15 +301,6 @@ struct ArtistDetailView: View {
         }
     }
 
-    private func getTopTracks() -> [Track]? {
-        guard let tracksInfo = tracksInfo else { return nil }
-
-        // Only show top tracks if there's actual play data
-        let playedTracks = tracksInfo.tracks.filter { $0.playCount > 0 }
-        guard !playedTracks.isEmpty else { return nil }
-
-        return playedTracks.sorted { $0.playCount > $1.playCount }
-    }
 }
 
 // Simple track row for artist detail view

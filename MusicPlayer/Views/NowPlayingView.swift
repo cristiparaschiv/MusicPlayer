@@ -2,6 +2,7 @@ import SwiftUI
 
 struct NowPlayingView: View {
     @ObservedObject var nowPlaying = NowPlayingManager.shared
+    @ObservedObject var progress = PlaybackProgressManager.shared
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
@@ -227,7 +228,7 @@ struct NowPlayingView: View {
             } else if let lyrics = nowPlaying.lyrics {
                 SyncedLyricsView(
                     lyrics: lyrics,
-                    currentTime: nowPlaying.currentTime,
+                    currentTime: progress.currentTime,
                     isPlaying: nowPlaying.playbackState == .playing
                 )
             } else if case .failed(let error) = nowPlaying.lyricsState {

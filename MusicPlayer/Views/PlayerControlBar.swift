@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PlayerControlBar: View {
     @ObservedObject var nowPlaying = NowPlayingManager.shared
+    @ObservedObject var progress = PlaybackProgressManager.shared
     @Binding var showQueue: Bool
     @Binding var showNowPlaying: Bool
 
@@ -166,7 +167,7 @@ struct PlayerControlBar: View {
             // Seek bar with inline time labels
             HStack(spacing: 6) {
                 // Current time
-                Text((isSeeking ? seekPosition : nowPlaying.currentTime).formattedDuration)
+                Text((isSeeking ? seekPosition : progress.currentTime).formattedDuration)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -177,14 +178,14 @@ struct PlayerControlBar: View {
                     ZStack(alignment: .leading) {
                         Slider(
                             value: isSeeking ? $seekPosition : Binding(
-                                get: { nowPlaying.currentTime },
+                                get: { progress.currentTime },
                                 set: { _ in }
                             ),
-                            in: 0...max(nowPlaying.duration, 0.01),
+                            in: 0...max(progress.duration, 0.01),
                             onEditingChanged: { editing in
                                 if editing {
                                     isSeeking = true
-                                    seekPosition = nowPlaying.currentTime
+                                    seekPosition = progress.currentTime
                                 } else {
                                     isSeeking = false
                                     nowPlaying.seek(to: seekPosition)
@@ -193,7 +194,7 @@ struct PlayerControlBar: View {
                         )
                         .controlSize(.mini)
                         .accessibilityLabel("Seek bar")
-                        .accessibilityValue("\(Int(nowPlaying.currentTime)) seconds of \(Int(nowPlaying.duration)) seconds")
+                        .accessibilityValue("\(Int(progress.currentTime)) seconds of \(Int(progress.duration)) seconds")
 
                         // Transparent overlay for tap-to-seek
                         Color.clear
@@ -202,7 +203,7 @@ struct PlayerControlBar: View {
                                 let sliderWidth = geometry.size.width
                                 let percentage = location.x / sliderWidth
                                 let clampedPercentage = min(max(0, percentage), 1)
-                                let duration = max(nowPlaying.duration, 0.01)
+                                let duration = max(progress.duration, 0.01)
                                 let targetTime = clampedPercentage * duration
                                 nowPlaying.seek(to: targetTime)
                             }
@@ -212,7 +213,7 @@ struct PlayerControlBar: View {
                 .id(nowPlaying.currentTrack?.id ?? -1)
 
                 // Total duration
-                Text(nowPlaying.duration.formattedDuration)
+                Text(progress.duration.formattedDuration)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()

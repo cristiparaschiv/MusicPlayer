@@ -527,6 +527,89 @@ class PlaylistManager {
         }
     }
 
+    // MARK: - Undo-Aware Operations
+
+    /// Remove a track from a playlist and register an undo action to re-insert it at its original position.
+    func removeTrackWithUndo(trackId: Int64, fromPlaylist playlistId: Int64) {
+        // Capture position before removal so undo can restore it
+        let position = playlistDAO.getTrackPosition(playlistId: playlistId, trackId: trackId) ?? 0
+
+        playlistDAO.removeTrack(playlistId: playlistId, trackId: trackId)
+
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: Constants.Notifications.playlistContentChanged,
+                object: nil,
+                userInfo: ["action": "track_removed", "playlistId": playlistId, "trackId": trackId]
+            )
+
+            Task { @MainActor in
+                UndoRedoManager.shared.undoManager.registerUndo(withTarget: self) { manager in
+                    manager.playlistDAO.addTrackAtPosition(playlistId: playlistId, trackId: trackId, position: position)
+                    NotificationCenter.default.post(
+                        name: Constants.Notifications.playlistContentChanged,
+                        object: nil,
+                        userInfo: ["action": "track_added", "playlistId": playlistId, "trackId": trackId]
+                    )
+                    UndoRedoManager.shared.undoManager.registerUndo(withTarget: manager) { mgr in
+                        mgr.removeTrackWithUndo(trackId: trackId, fromPlaylist: playlistId)
+                    }
+                    UndoRedoManager.shared.undoManager.setActionName("Remove Track")
+                }
+                UndoRedoManager.shared.undoManager.setActionName("Remove Track")
+            }
+        }
+    }
+
+    /// Delete a playlist and register an undo action to recreate it (without tracks).
+    func deletePlaylistWithUndo(id: Int64) {
+        guard let playlist = playlistDAO.getById(id: id) else { return }
+
+        // Capture tracks before deletion for undo
+        let tracksSnapshot = playlistDAO.getTracksForPlaylist(playlistId: id)
+
+        playlistDAO.delete(playlistId: id)
+
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: Constants.Notifications.playlistsChanged,
+                object: nil,
+                userInfo: ["action": "deleted", "playlistId": id]
+            )
+
+            Task { @MainActor in
+                UndoRedoManager.shared.undoManager.registerUndo(withTarget: self) { manager in
+                    // Recreate playlist
+                    let now = Date()
+                    let restored = Playlist(
+                        id: 0,
+                        name: playlist.name,
+                        dateCreated: playlist.dateCreated,
+                        dateModified: now,
+                        isSmartPlaylist: playlist.isSmartPlaylist,
+                        smartCriteria: playlist.smartCriteria,
+                        trackCount: 0
+                    )
+                    let newId = manager.playlistDAO.insert(playlist: restored)
+                    for track in tracksSnapshot {
+                        manager.playlistDAO.addTrack(playlistId: newId, trackId: track.id)
+                    }
+                    NotificationCenter.default.post(
+                        name: Constants.Notifications.playlistsChanged,
+                        object: nil,
+                        userInfo: ["action": "created", "playlistId": newId]
+                    )
+                    // Register redo
+                    UndoRedoManager.shared.undoManager.registerUndo(withTarget: manager) { mgr in
+                        mgr.deletePlaylistWithUndo(id: newId)
+                    }
+                    UndoRedoManager.shared.undoManager.setActionName("Delete Playlist")
+                }
+                UndoRedoManager.shared.undoManager.setActionName("Delete Playlist")
+            }
+        }
+    }
+
     // MARK: - Helper Methods
 
     private func callCompletion<T>(_ completion: ((Result<T, PlaylistError>) -> Void)?, with result: Result<T, PlaylistError>) {

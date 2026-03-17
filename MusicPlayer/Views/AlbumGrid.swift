@@ -8,6 +8,8 @@ struct AlbumGrid: View {
     private let columns = [GridItem(.adaptive(minimum: 180, maximum: 220), spacing: 16)]
 
     @State private var allAlbums: [Album] = []
+    @State private var hasMore = true
+    private let pageSize = 100
     private let albumDAO = AlbumDAO()
 
     init(albums: [Album]? = nil) {
@@ -18,6 +20,11 @@ struct AlbumGrid: View {
         LazyVGrid(columns: columns, spacing: 20) {
             ForEach(displayAlbums, id: \.id) { album in
                 AlbumGridItem(album: album)
+                    .onAppear {
+                        if albums == nil, album.id == allAlbums.last?.id {
+                            loadMore()
+                        }
+                    }
             }
         }
         .onAppear {
@@ -37,7 +44,15 @@ struct AlbumGrid: View {
     }
 
     private func loadAllAlbums() {
-        allAlbums = albumDAO.getAll()
+        allAlbums = albumDAO.getPage(offset: 0, limit: pageSize)
+        hasMore = allAlbums.count >= pageSize
+    }
+
+    private func loadMore() {
+        guard hasMore else { return }
+        let next = albumDAO.getPage(offset: allAlbums.count, limit: pageSize)
+        allAlbums.append(contentsOf: next)
+        hasMore = next.count >= pageSize
     }
 }
 

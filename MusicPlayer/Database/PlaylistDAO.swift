@@ -54,6 +54,8 @@ class PlaylistDAO {
     }
 
     func addTrack(playlistId: Int64, trackId: Int64) {
+        db.beginTransaction()
+
         let positionSQL = "SELECT COALESCE(MAX(position), -1) + 1 as next_pos FROM playlist_tracks WHERE playlist_id = ?"
         let positionResult = db.query(sql: positionSQL, parameters: [playlistId])
         let position = Int(positionResult.first?["next_pos"] as? Int64 ?? 0)
@@ -70,7 +72,41 @@ class PlaylistDAO {
             Date().timeIntervalSince1970
         ])
 
+        db.commitTransaction()
+
         updateTrackCount(playlistId: playlistId)
+    }
+
+    func addTrackAtPosition(playlistId: Int64, trackId: Int64, position: Int) {
+        db.beginTransaction()
+
+        // Shift existing tracks at or after the target position up by one
+        let shiftSQL = """
+        UPDATE playlist_tracks SET position = position + 1
+        WHERE playlist_id = ? AND position >= ?
+        """
+        db.execute(sql: shiftSQL, parameters: [playlistId, position])
+
+        let sql = """
+        INSERT INTO playlist_tracks (playlist_id, track_id, position, date_added)
+        VALUES (?, ?, ?, ?)
+        """
+        db.execute(sql: sql, parameters: [
+            playlistId,
+            trackId,
+            position,
+            Date().timeIntervalSince1970
+        ])
+
+        db.commitTransaction()
+        updateTrackCount(playlistId: playlistId)
+    }
+
+    func getTrackPosition(playlistId: Int64, trackId: Int64) -> Int? {
+        let sql = "SELECT position FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?"
+        let results = db.query(sql: sql, parameters: [playlistId, trackId])
+        guard let row = results.first, let pos = row["position"] as? Int64 else { return nil }
+        return Int(pos)
     }
 
     func removeTrack(playlistId: Int64, trackId: Int64) {

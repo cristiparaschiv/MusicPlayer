@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MiniPlayerView: View {
     @ObservedObject var nowPlaying = NowPlayingManager.shared
+    @ObservedObject var playbackProgress = PlaybackProgressManager.shared
 
     @State private var isSeeking = false
     @State private var seekPosition: TimeInterval = 0
@@ -91,8 +92,8 @@ struct MiniPlayerView: View {
                     .fill(Color.secondary.opacity(0.2))
 
                 // Progress
-                let progress = nowPlaying.duration > 0
-                    ? (isSeeking ? seekPosition : nowPlaying.currentTime) / nowPlaying.duration
+                let progress = playbackProgress.duration > 0
+                    ? (isSeeking ? seekPosition : playbackProgress.currentTime) / playbackProgress.duration
                     : 0
                 Rectangle()
                     .fill(Color.accentColor)
@@ -104,11 +105,11 @@ struct MiniPlayerView: View {
                     .onChanged { value in
                         isSeeking = true
                         let fraction = min(max(value.location.x / geometry.size.width, 0), 1)
-                        seekPosition = Double(fraction) * nowPlaying.duration
+                        seekPosition = Double(fraction) * playbackProgress.duration
                     }
                     .onEnded { value in
                         let fraction = min(max(value.location.x / geometry.size.width, 0), 1)
-                        let target = Double(fraction) * nowPlaying.duration
+                        let target = Double(fraction) * playbackProgress.duration
                         nowPlaying.seek(to: target)
                         isSeeking = false
                     }

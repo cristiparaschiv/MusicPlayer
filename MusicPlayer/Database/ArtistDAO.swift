@@ -28,6 +28,17 @@ class ArtistDAO {
         return results.compactMap { rowToArtist($0) }
     }
 
+    func getPage(offset: Int, limit: Int) -> [Artist] {
+        let sql = "SELECT * FROM artists ORDER BY name_sort LIMIT ? OFFSET ?"
+        let rows = db.query(sql: sql, parameters: [limit, offset])
+        return rows.compactMap { rowToArtist($0) }
+    }
+
+    func totalCount() -> Int {
+        let rows = db.query(sql: "SELECT COUNT(*) as count FROM artists")
+        return Int(rows.first?["count"] as? Int64 ?? 0)
+    }
+
     func getById(id: Int64) -> Artist? {
         let sql = "SELECT * FROM artists WHERE id = ?"
         let results = db.query(sql: sql, parameters: [id])

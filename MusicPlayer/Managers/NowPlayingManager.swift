@@ -24,8 +24,6 @@ class NowPlayingManager: ObservableObject {
     @Published var lyrics: String?
     @Published var lyricsState: LoadingState = .idle
     @Published var playbackState: PlaybackState = .stopped
-    @Published var currentTime: TimeInterval = 0
-    @Published var duration: TimeInterval = 0
     @Published var volume: Float = 0.8
     @Published var isShuffleEnabled: Bool = false
     @Published var repeatMode: RepeatMode = .off
@@ -295,25 +293,11 @@ class NowPlayingManager: ObservableObject {
             object: nil
         )
 
-        // Playback time updates (from PlayerManager's 0.5s timer)
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handlePlaybackTimeChanged(_:)),
-            name: Constants.Notifications.playbackTimeChanged,
-            object: nil
-        )
-    }
-
-    @objc private func handlePlaybackTimeChanged(_ notification: Notification) {
-        currentTime = playerManager.currentTime
-        duration = playerManager.duration
     }
 
     private func loadInitialState() {
         currentTrack = queueManager.currentTrack
         playbackState = playerManager.playbackState
-        currentTime = playerManager.currentTime
-        duration = playerManager.duration
         volume = playerManager.volume
         isShuffleEnabled = queueManager.isShuffleEnabled
         repeatMode = queueManager.repeatMode
@@ -418,8 +402,13 @@ class NowPlayingManager: ObservableObject {
         if let userInfo = notification.userInfo,
            let trackId = userInfo["trackId"] as? Int64,
            trackId == currentTrack?.id {
-            if let updatedTrack = TrackDAO().getById(id: trackId) {
-                currentTrack = updatedTrack
+            let dao = TrackDAO()
+            nowPlayingQueue.async { [weak self] in
+                if let updatedTrack = dao.getById(id: trackId) {
+                    DispatchQueue.main.async {
+                        self?.currentTrack = updatedTrack
+                    }
+                }
             }
         }
     }

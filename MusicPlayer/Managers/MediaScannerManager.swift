@@ -716,6 +716,8 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
     func updateLibraryStatistics() {
         let db = DatabaseManager.shared
 
+        db.beginTransaction()
+
         // Update artist statistics
         db.execute(sql: """
             UPDATE artists SET
@@ -747,30 +749,11 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
         db.execute(sql: "DELETE FROM albums WHERE track_count = 0")
         db.execute(sql: "DELETE FROM genres WHERE track_count = 0")
         db.execute(sql: "DELETE FROM composers WHERE track_count = 0")
+
+        db.commitTransaction()
     }
 
     // MARK: - Search and Filtering
-
-    func searchTracks(query: String) -> [Track] {
-        guard !query.isEmpty else {
-            return []
-        }
-
-        let searchPattern = "%\(query)%"
-        let sql = """
-            SELECT * FROM tracks
-            WHERE title LIKE ? OR artist_name LIKE ? OR album_title LIKE ? OR album_artist_name LIKE ?
-            ORDER BY title_sort
-            LIMIT 100
-        """
-
-        let results = DatabaseManager.shared.query(
-            sql: sql,
-            parameters: [searchPattern, searchPattern, searchPattern, searchPattern]
-        )
-
-        return results.compactMap { trackDAO.trackFromRow($0) }
-    }
 
     func filterTracks(
         artist: String? = nil,

@@ -7,6 +7,8 @@ struct ArtistGrid: View {
     private let columns = [GridItem(.adaptive(minimum: 180, maximum: 220), spacing: 16)]
 
     @State private var allArtists: [Artist] = []
+    @State private var hasMore = true
+    private let pageSize = 100
     private let artistDAO = ArtistDAO()
 
     init(artists: [Artist]? = nil) {
@@ -17,6 +19,11 @@ struct ArtistGrid: View {
         LazyVGrid(columns: columns, spacing: 20) {
             ForEach(displayArtists, id: \.id) { artist in
                 ArtistGridItem(artist: artist)
+                    .onAppear {
+                        if artists == nil, artist.id == allArtists.last?.id {
+                            loadMore()
+                        }
+                    }
             }
         }
         .onAppear {
@@ -36,7 +43,15 @@ struct ArtistGrid: View {
     }
 
     private func loadAllArtists() {
-        allArtists = artistDAO.getAll()
+        allArtists = artistDAO.getPage(offset: 0, limit: pageSize)
+        hasMore = allArtists.count >= pageSize
+    }
+
+    private func loadMore() {
+        guard hasMore else { return }
+        let next = artistDAO.getPage(offset: allArtists.count, limit: pageSize)
+        allArtists.append(contentsOf: next)
+        hasMore = next.count >= pageSize
     }
 }
 

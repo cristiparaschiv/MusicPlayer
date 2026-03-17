@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ImmersiveNowPlayingView: View {
     @ObservedObject var nowPlaying = NowPlayingManager.shared
+    @ObservedObject var progress = PlaybackProgressManager.shared
     let onClose: () -> Void
 
     @State private var isSeeking = false
@@ -171,7 +172,7 @@ struct ImmersiveNowPlayingView: View {
                 ScrollView(showsIndicators: false) {
                     ImmersiveLyricsContent(
                         lyrics: lyrics,
-                        currentTime: nowPlaying.currentTime
+                        currentTime: progress.currentTime
                     )
                 }
             } else if nowPlaying.lyricsState.isLoading {
@@ -192,7 +193,7 @@ struct ImmersiveNowPlayingView: View {
         VStack(spacing: 12) {
             // Seek bar
             HStack(spacing: 8) {
-                Text((isSeeking ? seekPosition : nowPlaying.currentTime).formattedDuration)
+                Text((isSeeking ? seekPosition : progress.currentTime).formattedDuration)
                     .font(.caption)
                     .foregroundColor(.white.opacity(0.6))
                     .monospacedDigit()
@@ -200,13 +201,13 @@ struct ImmersiveNowPlayingView: View {
 
                 Slider(
                     value: Binding(
-                        get: { isSeeking ? seekPosition : nowPlaying.currentTime },
+                        get: { isSeeking ? seekPosition : progress.currentTime },
                         set: { newValue in
                             seekPosition = newValue
                             if !isSeeking { isSeeking = true }
                         }
                     ),
-                    in: 0...max(nowPlaying.duration, 0.01),
+                    in: 0...max(progress.duration, 0.01),
                     onEditingChanged: { editing in
                         if !editing {
                             nowPlaying.seek(to: seekPosition)
@@ -216,7 +217,7 @@ struct ImmersiveNowPlayingView: View {
                 )
                 .tint(.white)
 
-                Text(nowPlaying.duration.formattedDuration)
+                Text(progress.duration.formattedDuration)
                     .font(.caption)
                     .foregroundColor(.white.opacity(0.6))
                     .monospacedDigit()
@@ -302,11 +303,11 @@ struct ImmersiveNowPlayingView: View {
 
                 return nil
             case 123: // Left arrow
-                nowPlaying.seek(to: max(0, nowPlaying.currentTime - 10))
+                nowPlaying.seek(to: max(0, progress.currentTime - 10))
 
                 return nil
             case 124: // Right arrow
-                nowPlaying.seek(to: min(nowPlaying.duration, nowPlaying.currentTime + 10))
+                nowPlaying.seek(to: min(progress.duration, progress.currentTime + 10))
 
                 return nil
             default:

@@ -5,6 +5,7 @@ struct PlaylistView: View {
     let isFavorites: Bool
 
     @State private var tracks: [Track] = []
+    @State private var searchText = ""
     @State private var showingDeleteAlert = false
     @State private var showingClearAlert = false
     @State private var showingSmartPlaylistEditor = false
@@ -24,6 +25,16 @@ struct PlaylistView: View {
     init(favorites: Bool) {
         self.playlist = nil
         self.isFavorites = true
+    }
+
+    var filteredTracks: [Track] {
+        guard !searchText.isEmpty else { return tracks }
+        let query = searchText.lowercased()
+        return tracks.filter {
+            $0.title.lowercased().contains(query) ||
+            ($0.artistName ?? "").lowercased().contains(query) ||
+            ($0.albumTitle ?? "").lowercased().contains(query)
+        }
     }
 
     private var displayName: String {
@@ -156,7 +167,7 @@ struct PlaylistView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 TrackTableView(
-                    tracks: tracks,
+                    tracks: filteredTracks,
                     config: TrackTableConfig(
                         showRemoveFromPlaylist: true,
                         removeFromPlaylistLabel: "Remove from \(displayName)",
@@ -209,6 +220,7 @@ struct PlaylistView: View {
                 }
             }
         }
+        .searchable(text: $searchText, placement: .toolbar, prompt: "Search songs")
         .onAppear {
             loadTracks()
         }
@@ -272,8 +284,7 @@ struct PlaylistView: View {
 
     private func deletePlaylist() {
         guard let playlist = playlist else { return }
-        playlistDAO.delete(playlistId: playlist.id)
-        NotificationCenter.default.post(name: Constants.Notifications.playlistsChanged, object: nil)
+        PlaylistManager.shared.deletePlaylistWithUndo(id: playlist.id)
         dismiss()
     }
 
@@ -302,12 +313,8 @@ struct PlaylistView: View {
             trackDAO.updateFavorite(trackId: trackId, isFavorite: false)
             NotificationCenter.default.post(name: Constants.Notifications.trackFavoriteChanged, object: nil)
         } else if let playlist = playlist {
-            playlistDAO.removeTrack(playlistId: playlist.id, trackId: trackId)
-            NotificationCenter.default.post(
-                name: Constants.Notifications.playlistContentChanged,
-                object: nil,
-                userInfo: ["playlistId": playlist.id]
-            )
+            PlaylistManager.shared.removeTrackWithUndo(trackId: trackId, fromPlaylist: playlist.id)
+            return
         }
         loadTracks()
     }

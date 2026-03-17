@@ -581,7 +581,10 @@ class PlayerManager: NSObject {
     private func applyVolumeWithReplayGain() {
         playerQueue.async { [weak self] in
             guard let self = self, let player = self.audioPlayer else { return }
-            let vol = self.effectiveVolume(for: self._currentTrack)
+            self.stateLock.lock()
+            let track = self._currentTrack
+            self.stateLock.unlock()
+            let vol = self.effectiveVolume(for: track)
             do {
                 try player.setVolume(vol)
             } catch {

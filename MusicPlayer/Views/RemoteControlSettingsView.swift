@@ -60,6 +60,37 @@ struct RemoteControlSettingsView: View {
                     .background(Color(nsColor: .controlBackgroundColor))
                     .cornerRadius(8)
 
+                    // Authentication Token
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Authentication Token")
+                            .font(.body)
+                        Text("Include this token in API requests as a Bearer token")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        HStack {
+                            Text(server.serverToken)
+                                .font(.system(.caption, design: .monospaced))
+                                .textSelection(.enabled)
+                                .lineLimit(1)
+                            Spacer()
+                            Button("Copy") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(server.serverToken, forType: .string)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            Button("Regenerate") {
+                                server.regenerateToken()
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                    }
+                    .padding()
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .cornerRadius(8)
+
                     // Status & QR Code
                     if server.isRunning, let url = server.serverURL {
                         VStack(spacing: 16) {

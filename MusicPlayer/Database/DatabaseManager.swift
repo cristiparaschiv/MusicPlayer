@@ -297,6 +297,11 @@ class DatabaseManager {
                 END
             """)
         }),
+        // Migration 3: Add missing indexes
+        ("Add missing indexes on tracks.composer_id and playlist_tracks.track_id", { db in
+            db._execute(sql: "CREATE INDEX IF NOT EXISTS idx_tracks_composer_id ON tracks(composer_id)")
+            db._execute(sql: "CREATE INDEX IF NOT EXISTS idx_playlist_tracks_track_id ON playlist_tracks(track_id)")
+        }),
     ]
 
     private func runMigrations() {

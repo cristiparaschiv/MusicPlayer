@@ -35,6 +35,17 @@ class AlbumDAO {
         return results.compactMap { rowToAlbum($0) }
     }
 
+    func getPage(offset: Int, limit: Int) -> [Album] {
+        let sql = "SELECT * FROM albums ORDER BY title_sort LIMIT ? OFFSET ?"
+        let rows = db.query(sql: sql, parameters: [limit, offset])
+        return rows.compactMap { rowToAlbum($0) }
+    }
+
+    func totalCount() -> Int {
+        let rows = db.query(sql: "SELECT COUNT(*) as count FROM albums")
+        return Int(rows.first?["count"] as? Int64 ?? 0)
+    }
+
     func getById(id: Int64) -> Album? {
         let sql = "SELECT * FROM albums WHERE id = ?"
         let results = db.query(sql: sql, parameters: [id])
