@@ -10,6 +10,7 @@ class SecurityBookmarkManager {
     private let keychainAccount = "security-scoped-bookmarks"
     private let keychainMigrationKey = "BookmarkMigratedToKeychain_v1"
     private var activeBookmarks: [URL: URL] = [:] // Original URL -> Security-scoped URL
+    private(set) var failedBookmarkPaths: [String] = [] // Paths that failed to resolve
     private let lock = NSLock()
     private let storageLock = NSLock() // Protects load-modify-save sequences
 
@@ -135,6 +136,10 @@ class SecurityBookmarkManager {
     func resolveAllBookmarks() {
         let bookmarks = loadBookmarks()
 
+        lock.lock()
+        failedBookmarkPaths.removeAll()
+        lock.unlock()
+
         for (path, bookmarkData) in bookmarks {
             resolveBookmark(path: path, data: bookmarkData)
         }
@@ -176,11 +181,19 @@ class SecurityBookmarkManager {
                 if isStale {
                     _ = createBookmark(for: url)
                 }
+            } else {
+                lock.lock()
+                failedBookmarkPaths.append(path)
+                lock.unlock()
             }
         } catch {
             #if DEBUG
             print("Failed to resolve bookmark for \(path): \(error)")
             #endif
+            // Track the failure so the UI can inform the user
+            lock.lock()
+            failedBookmarkPaths.append(path)
+            lock.unlock()
             // Remove invalid bookmark (atomic load-modify-save)
             storageLock.lock()
             var bookmarks = loadBookmarks()

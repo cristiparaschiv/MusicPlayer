@@ -71,21 +71,19 @@ struct ArtistGridItem: View {
             VStack(alignment: .leading, spacing: 8) {
                 // Album artwork
                 ZStack(alignment: .bottomTrailing) {
-                    Color.secondary.opacity(0.2)
-                        .aspectRatio(1, contentMode: .fit)
-                        .overlay {
-                            if let artwork = artwork {
-                                Image(nsImage: artwork)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                            } else {
-                                Image(systemName: Icons.opticalDiscFill)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .foregroundStyle(.secondary.opacity(0.5))
-                                    .padding(30)
-                            }
+                    Group {
+                        if let artwork = artwork {
+                            Color.secondary.opacity(0.2)
+                                .overlay {
+                                    Image(nsImage: artwork)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                }
+                        } else {
+                            ArtistInitialPlaceholder(name: artist.name)
                         }
+                    }
+                        .aspectRatio(1, contentMode: .fit)
                         .clipped()
                         .cornerRadius(8)
                         .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
@@ -197,5 +195,58 @@ struct ArtistGridItem: View {
         let trackDAO = TrackDAO()
         let tracks = trackDAO.getByArtistId(artistId: artist.id)
         QueueManager.shared.insertNext(tracks)
+    }
+}
+
+/// Typographic placeholder shown when an artist has no artwork.
+/// Produces a stable, name-derived gradient with the artist's initial overlaid.
+struct ArtistInitialPlaceholder: View {
+    let name: String
+
+    var body: some View {
+        GeometryReader { geo in
+            let side = min(geo.size.width, geo.size.height)
+            ZStack {
+                LinearGradient(
+                    colors: gradientColors(for: name),
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                Text(initial(for: name))
+                    .font(.system(size: side * 0.45, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .shadow(color: .black.opacity(0.15), radius: 2, x: 0, y: 1)
+            }
+        }
+    }
+
+    private func initial(for name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = trimmed.first else { return "?" }
+        return String(first).uppercased()
+    }
+
+    private func gradientColors(for name: String) -> [Color] {
+        let hash = stableHash(name)
+        let hue = Double(hash % 360) / 360.0
+        let baseSat = 0.55
+        let baseBright = 0.55
+        let base = Color(hue: hue, saturation: baseSat, brightness: baseBright)
+        let accent = Color(
+            hue: fmod(hue + 0.06, 1.0),
+            saturation: min(baseSat + 0.15, 0.9),
+            brightness: min(baseBright + 0.15, 0.85)
+        )
+        return [base, accent]
+    }
+
+    /// FNV-1a — small, stable, not cryptographic. Used only to pick a hue.
+    private func stableHash(_ s: String) -> Int {
+        var h: UInt64 = 0xcbf29ce484222325
+        for byte in s.lowercased().utf8 {
+            h ^= UInt64(byte)
+            h &*= 0x100000001b3
+        }
+        return Int(h % UInt64(Int.max))
     }
 }

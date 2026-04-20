@@ -28,15 +28,7 @@ struct ArtistDetailView: View {
                             .resizable()
                             .aspectRatio(contentMode: .fill)
                     } else {
-                        ZStack {
-                            Color.secondary.opacity(0.2)
-
-                            Image(systemName: Icons.personFill)
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .foregroundStyle(.secondary.opacity(0.5))
-                                .padding(50)
-                        }
+                        ArtistInitialPlaceholder(name: artist.name)
                     }
                 }
                 .frame(width: 200, height: 200)

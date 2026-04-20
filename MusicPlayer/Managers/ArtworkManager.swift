@@ -118,8 +118,35 @@ class ArtworkManager {
 
     /// Fetch artwork from track file metadata
     func fetchArtworkFromTrack(_ track: Track, completion: @escaping (Result<NSImage, ArtworkError>) -> Void) {
+        // First check if we already have cached album artwork — ensures consistency
+        // between album detail view and now playing panel
+        if let albumTitle = track.albumTitle {
+            let artistName = track.albumArtistName ?? track.artistName
+            let cacheKey = self.generateCacheKey(type: .album, name: albumTitle, artist: artistName)
+            if let cachedImage = self.getCachedImage(for: cacheKey) {
+                DispatchQueue.main.async { completion(.success(cachedImage)) }
+                return
+            }
+        }
+
         artworkQueue.async { [weak self] in
             guard let self = self else { return }
+
+            // Re-check album cache (may have been populated while queued)
+            if let albumTitle = track.albumTitle {
+                let artistName = track.albumArtistName ?? track.artistName
+                let cacheKey = self.generateCacheKey(type: .album, name: albumTitle, artist: artistName)
+                if let cachedImage = self.getCachedImage(for: cacheKey) {
+                    self.callCompletion(completion, with: .success(cachedImage))
+                    return
+                }
+                // Check disk cache for album art
+                if let diskImage = self.loadImageFromDisk(cacheKey: cacheKey) {
+                    self.cacheImage(diskImage, for: cacheKey)
+                    self.callCompletion(completion, with: .success(diskImage))
+                    return
+                }
+            }
 
             let url = URL(fileURLWithPath: track.filePath)
 

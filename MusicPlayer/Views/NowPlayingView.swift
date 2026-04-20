@@ -126,73 +126,79 @@ struct NowPlayingView: View {
     // MARK: - Audio Info Section
 
     private func audioInfoSection(track: Track) -> some View {
-        let pills = audioInfoPills(track: track)
-        return Group {
-            if !pills.isEmpty {
-                FlowLayout(spacing: 6) {
-                    ForEach(pills, id: \.self) { pill in
-                        Text(pill)
-                            .font(.caption2)
-                            .fontWeight(.medium)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Color.secondary.opacity(0.12))
-                            .cornerRadius(4)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+        let caption = audioCaption(track: track)
+        let sizeText = fileSizeText(track: track)
+        return VStack(alignment: .center, spacing: 4) {
+            if let caption, !caption.isEmpty {
+                Text(caption)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            if let sizeText {
+                Text(sizeText)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
     }
 
-    private func audioInfoPills(track: Track) -> [String] {
-        var pills: [String] = []
+    /// Single-line caption: "FLAC · 24-bit / 96 kHz · Stereo · 2,304 kbps"
+    private func audioCaption(track: Track) -> String? {
+        var segments: [String] = []
 
         if let format = track.formatName, !format.isEmpty {
-            pills.append(format)
+            segments.append(format.uppercased())
         }
 
+        var depthRate: [String] = []
         if let bitDepth = track.bitDepth, bitDepth > 0 {
-            pills.append("\(bitDepth)-bit")
+            depthRate.append("\(bitDepth)-bit")
         }
-
         if let sampleRate = track.sampleRate, sampleRate > 0 {
+            let khz = Double(sampleRate) / 1000.0
             if sampleRate >= 1000 {
-                let khz = Double(sampleRate) / 1000.0
-                if khz.truncatingRemainder(dividingBy: 1) == 0 {
-                    pills.append("\(Int(khz)) kHz")
-                } else {
-                    pills.append(String(format: "%.1f kHz", khz))
-                }
+                let str = khz.truncatingRemainder(dividingBy: 1) == 0
+                    ? "\(Int(khz)) kHz"
+                    : String(format: "%.1f kHz", khz)
+                depthRate.append(str)
             } else {
-                pills.append("\(sampleRate) Hz")
+                depthRate.append("\(sampleRate) Hz")
             }
         }
-
-        if let bitrate = track.bitrate, bitrate > 0 {
-            pills.append("\(bitrate) kbps")
+        if !depthRate.isEmpty {
+            segments.append(depthRate.joined(separator: " / "))
         }
 
         if let channels = track.channelCount {
             switch channels {
-            case 1: pills.append("Mono")
-            case 2: pills.append("Stereo")
-            default: pills.append("\(channels)ch")
+            case 1: segments.append("Mono")
+            case 2: segments.append("Stereo")
+            default: segments.append("\(channels)ch")
             }
         }
 
+        // Only show bitrate if plausible (guards against legacy bad data where
+        // the scanner incorrectly divided kbps by 1000).
+        if let bitrate = track.bitrate, bitrate >= 32 {
+            let formatter = NumberFormatter()
+            formatter.numberStyle = .decimal
+            let num = formatter.string(from: NSNumber(value: bitrate)) ?? "\(bitrate)"
+            segments.append("\(num) kbps")
+        }
+
+        return segments.isEmpty ? nil : segments.joined(separator: " · ")
+    }
+
+    private func fileSizeText(track: Track) -> String? {
         let fileSize = track.fileSize
-        if fileSize > 0 {
-            let mb = Double(fileSize) / (1024.0 * 1024.0)
-            if mb >= 1.0 {
-                pills.append(String(format: "%.1f MB", mb))
-            } else {
-                let kb = Double(fileSize) / 1024.0
-                pills.append(String(format: "%.0f KB", kb))
-            }
+        guard fileSize > 0 else { return nil }
+        let mb = Double(fileSize) / (1024.0 * 1024.0)
+        if mb >= 1.0 {
+            return String(format: "%.1f MB", mb)
         }
-
-        return pills
+        let kb = Double(fileSize) / 1024.0
+        return String(format: "%.0f KB", kb)
     }
 
     // MARK: - Lyrics Section

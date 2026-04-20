@@ -1,7 +1,7 @@
 import Foundation
 
 @MainActor
-class UndoRedoManager: ObservableObject {
+class UndoRedoManager {
     static let shared = UndoRedoManager()
 
     let undoManager = UndoManager()

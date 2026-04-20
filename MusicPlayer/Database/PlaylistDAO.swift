@@ -61,7 +61,7 @@ class PlaylistDAO {
         let position = Int(positionResult.first?["next_pos"] as? Int64 ?? 0)
 
         let sql = """
-        INSERT INTO playlist_tracks (playlist_id, track_id, position, date_added)
+        INSERT OR IGNORE INTO playlist_tracks (playlist_id, track_id, position, date_added)
         VALUES (?, ?, ?, ?)
         """
 
@@ -88,7 +88,7 @@ class PlaylistDAO {
         db.execute(sql: shiftSQL, parameters: [playlistId, position])
 
         let sql = """
-        INSERT INTO playlist_tracks (playlist_id, track_id, position, date_added)
+        INSERT OR IGNORE INTO playlist_tracks (playlist_id, track_id, position, date_added)
         VALUES (?, ?, ?, ?)
         """
         db.execute(sql: sql, parameters: [

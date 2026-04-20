@@ -272,7 +272,9 @@ final class ScriptingEngine: ObservableObject {
 
         let searchTracksBlock: @convention(block) (String) -> [[String: Any]] = { [weak self] query in
             guard let self = self else { return [] }
-            return self.trackDAO.search(query: query).map { Self.trackToDict($0) }
+            let trimmed = query.trimmingCharacters(in: .whitespaces)
+            let tracks = trimmed.isEmpty ? self.trackDAO.getAll() : self.trackDAO.search(query: query)
+            return tracks.map { Self.trackToDict($0) }
         }
         let searchAlbumsBlock: @convention(block) (String) -> [[String: Any]] = { [weak self] query in
             guard let self = self else { return [] }

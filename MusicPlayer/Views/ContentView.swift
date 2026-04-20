@@ -12,6 +12,8 @@ struct ContentView: View {
     @State private var navigationPath = NavigationPath()
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var showKeyboardShortcuts = false
+    @State private var showBookmarkAlert = false
+    @State private var failedBookmarkPaths = ""
     @ObservedObject private var nowPlaying = NowPlayingManager.shared
 
     var body: some View {
@@ -102,17 +104,18 @@ struct ContentView: View {
                     }
                     .toolbar {
                         ToolbarItem(placement: .automatic) {
-                            SearchTextField(text: $searchManager.searchText, placeholder: "Search tracks, albums, artists...")
+                            SearchTextField(text: $searchManager.searchText, placeholder: "Search tracks, albums, artists...", onSubmit: {
+                                    if !searchManager.searchText.isEmpty {
+                                        showSearchDropdown = false
+                                        selection = .search
+                                    }
+                                })
                                 .frame(width: 240)
                                 .onChange(of: searchManager.searchText) { _, newValue in
                                     searchManager.performSearch()
                                     if !newValue.isEmpty {
                                         withAnimation(.easeOut(duration: 0.2)) {
                                             showSearchDropdown = true
-                                        }
-                                        // Auto-switch sidebar to search view
-                                        if selection != .search {
-                                            selection = .search
                                         }
                                     } else {
                                         withAnimation(.easeOut(duration: 0.15)) {
@@ -192,6 +195,15 @@ struct ContentView: View {
             .onAppear {
                 setupKeyboardShortcuts()
                 isLibraryEmpty = MediaScannerManager.shared.isLibraryEmpty()
+                checkFailedBookmarks()
+            }
+            .alert("Library Folder Access Lost", isPresented: $showBookmarkAlert) {
+                Button("Open Settings") {
+                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                }
+                Button("Dismiss", role: .cancel) {}
+            } message: {
+                Text("Some library folders could not be accessed and need to be re-added:\n\(failedBookmarkPaths)")
             }
             .onDisappear {
                 removeKeyboardShortcuts()
@@ -221,6 +233,14 @@ struct ContentView: View {
                 handleFileDrop(providers)
                 return true
             }
+        }
+    }
+
+    private func checkFailedBookmarks() {
+        let failed = SecurityBookmarkManager.shared.failedBookmarkPaths
+        if !failed.isEmpty {
+            failedBookmarkPaths = failed.joined(separator: "\n")
+            showBookmarkAlert = true
         }
     }
 

@@ -96,7 +96,7 @@ class PlayerManager: NSObject {
         stateLock.lock()
         let player = audioPlayer
         stateLock.unlock()
-        guard let player = player, player.isPlaying else {
+        guard let player = player else {
             return 0
         }
         return player.currentTime ?? 0
@@ -633,25 +633,26 @@ class PlayerManager: NSObject {
     private func safeCleanupPlayer(_ player: AudioPlayer?) {
         guard let player = player else { return }
 
-        // Remove effect node tracking for this player's engine
-        EQManager.shared.removeEQNode(for: player.audioEngine)
-        ReverbManager.shared.removeNode(for: player.audioEngine)
-        DelayManager.shared.removeNode(for: player.audioEngine)
-        PitchSpeedManager.shared.removeNode(for: player.audioEngine)
-        EffectChainManager.shared.unregisterEngine(player.audioEngine)
-
-        // Stop the player first
+        // Stop the player — this stops the engine and its internal threads
         player.stop()
 
-        // Keep a strong reference to prevent immediate deallocation
+        // Keep a strong reference to prevent immediate deallocation.
+        // Effect node tracking is cleaned up after the delay, once SFBAudioEngine's
+        // internal threads have fully wound down.
         cleanupLock.lock()
         playersBeingCleaned.append(player)
         cleanupLock.unlock()
 
-        // Delay cleanup to allow internal threads to finish
-        // Hi-res decoders may need more time to wind down
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2.0) { [weak self] in
+        let engine = player.audioEngine
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3.0) { [weak self] in
             guard let self = self else { return }
+
+            // Now safe to remove effect node references — engine threads are done
+            EQManager.shared.removeEQNode(for: engine)
+            ReverbManager.shared.removeNode(for: engine)
+            DelayManager.shared.removeNode(for: engine)
+            PitchSpeedManager.shared.removeNode(for: engine)
+            EffectChainManager.shared.unregisterEngine(engine)
 
             self.cleanupLock.lock()
             self.playersBeingCleaned.removeAll { $0 === player }
@@ -798,6 +799,16 @@ class PlayerManager: NSObject {
             return
         }
 
+        // If a previous crossfade is still in progress, stop and clean up
+        // the fading-out player immediately to prevent multiple tracks playing
+        if let existingFadingOut = fadingOutPlayer {
+            safeCleanupPlayer(existingFadingOut)
+            fadingOutPlayer = nil
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.crossfadeTimer?.invalidate()
+            self?.crossfadeTimer = nil
+        }
 
         // Get the crossfade duration
         let duration = _crossfadeDuration
@@ -869,8 +880,8 @@ class PlayerManager: NSObject {
 
                     // Apply volumes to the captured player references
                     do {
-                        if capturedFadingOut != nil {
-                            try currentPlayer.setVolume(oldVolume)
+                        if let fadingOut = capturedFadingOut {
+                            try fadingOut.setVolume(oldVolume)
                         }
                         if capturedAudioPlayer === newPlayer {
                             try newPlayer.setVolume(newVolume)
@@ -1250,6 +1261,17 @@ extension PlayerManager: AudioPlayer.Delegate {
               let sourceNode = connectionPoint.node else { return }
         let format = mixer.inputFormat(forBus: 0)
 
+        // Skip hi-res formats that AU effects can't handle (non-standard sample rates or bit depths).
+        // The standard format check: if it's not 32-bit float, effects may fail.
+        let isStandardFormat = format.commonFormat == .pcmFormatFloat32 || format.commonFormat == .pcmFormatFloat64
+        let isStandardSampleRate = format.sampleRate == 44100 || format.sampleRate == 48000
+        guard isStandardFormat && isStandardSampleRate else {
+            #if DEBUG
+            print("[AudioEffects] Skipping effect chain for non-standard format: \(format)")
+            #endif
+            return
+        }
+
         // Disconnect source → mixer so the chain can be inserted
         engine.disconnectNodeInput(mixer)
 
@@ -1274,21 +1296,14 @@ extension PlayerManager: AudioPlayer.Delegate {
     }
 
     func audioPlayer(_ audioPlayer: AudioPlayer, reconfigureProcessingGraph engine: AVAudioEngine, with format: AVAudioFormat) -> AVAudioNode {
-        // Register engine and build chain synchronously.
-        // AU plugin slots are skipped here (async instantiation not possible in this sync callback)
-        // and will be re-wired when the async buildChainAsync path is invoked later if needed.
+        // Return mainMixerNode to let SFBAudioEngine wire playerNode → mixer directly.
+        // Effects are inserted afterward via insertEffectNodes() which handles format
+        // incompatibilities gracefully.
         EffectChainManager.shared.registerEngine(engine)
-
-        // buildChain returns nil when no slots are configured; fall back to mainMixerNode so
-        // SFBAudioEngine has a valid node to connect the player source to.
-        let entryNode = EffectChainManager.shared.buildChain(for: engine, sourceNode: engine.inputNode, format: format)
-            ?? engine.mainMixerNode
-
-        // SFBAudioEngine connects playerNode → returned node
         #if DEBUG
-        print("[AudioEffects] reconfigureProcessingGraph: chain built (format: \(format)), entry=\(entryNode)")
+        print("[AudioEffects] reconfigureProcessingGraph: format=\(format), deferring to insertEffectNodes")
         #endif
-        return entryNode
+        return engine.mainMixerNode
     }
 
     func audioPlayer(_ audioPlayer: AudioPlayer, encounteredError error: Error) {

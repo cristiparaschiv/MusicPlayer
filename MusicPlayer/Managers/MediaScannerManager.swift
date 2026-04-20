@@ -30,6 +30,7 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
 
     private let scanQueue = DispatchQueue(label: "com.orangemusicplayer.scanner", qos: .userInitiated)
     private let fileSystemMonitor = FileSystemMonitor()
+    private var networkPollTimer: Timer?
 
     private var isCurrentlyScanning = false
     private let scanLock = NSLock()
@@ -50,6 +51,10 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
         trackDAO.entityCache = self
         setupFileSystemMonitoring()
         refreshPathStatuses()
+        startNetworkPollTimer()
+
+        // Incremental scan on startup to pick up changes while the app was closed
+        scanForChanges()
     }
 
     /// Check if a path is on a network volume (SMB, AFP, NFS, etc.)
@@ -77,10 +82,9 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
     
     func isLibraryEmpty() -> Bool {
         let db = DatabaseManager.shared
-        let sql = "SELECT COUNT(*) FROM library_paths"
+        let sql = "SELECT COUNT(*) as cnt FROM library_paths"
         let results = db.query(sql: sql)
-        
-        return (results.first?["COUNT(*)"] as? Int64) ?? 0 == 0
+        return ((results.first?["cnt"] as? Int64) ?? 0) == 0
     }
     
     func addLibraryPath(_ path: String, triggerScan: Bool = true) {
@@ -88,8 +92,9 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
         let sql = "INSERT OR IGNORE INTO library_paths (path, date_added) VALUES (?, ?)"
         db.execute(sql: sql, parameters: [path, Date().timeIntervalSince1970])
 
-        // Restart file system monitoring with updated paths
+        // Restart file system monitoring and network polling with updated paths
         startMonitoring()
+        restartNetworkPollTimer()
 
         // Post notification that library paths changed
         NotificationCenter.default.post(name: Constants.Notifications.libraryPathsChanged, object: nil)
@@ -122,8 +127,9 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
         let deleteTracksSql = "DELETE FROM tracks WHERE file_path LIKE ? ESCAPE '\\'"
         db.execute(sql: deleteTracksSql, parameters: [escapedPath + "/%"])
 
-        // Restart file system monitoring with updated paths
+        // Restart file system monitoring and network polling with updated paths
         startMonitoring()
+        restartNetworkPollTimer()
 
         // Post notifications that library was updated
         NotificationCenter.default.post(name: Constants.Notifications.libraryPathsChanged, object: nil)
@@ -169,6 +175,25 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
 
     func stopMonitoring() {
         fileSystemMonitor.stopMonitoring()
+    }
+
+    // MARK: - Network Volume Polling
+
+    private func startNetworkPollTimer() {
+        let hasNetworkPaths = getLibraryPaths().contains { Self.isNetworkVolume(path: $0) }
+        guard hasNetworkPaths else { return }
+
+        DispatchQueue.main.async { [weak self] in
+            self?.networkPollTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+                self?.scanForChanges()
+            }
+        }
+    }
+
+    func restartNetworkPollTimer() {
+        networkPollTimer?.invalidate()
+        networkPollTimer = nil
+        startNetworkPollTimer()
     }
 
     // MARK: - Scanning Implementation
@@ -257,7 +282,6 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
         isCurrentlyScanning = true
         scanLock.unlock()
 
-        updateProgress("Preparing scan...")
         refreshPathStatuses()
 
         defer {
@@ -272,6 +296,32 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
 
         // Mark scan start time — used to detect deleted files instead of a Set
         let scanStartTime = Date().timeIntervalSince1970
+
+        // For incremental scans, do a quick silent check if anything changed.
+        // Avoids showing scan UI and loading caches when nothing changed.
+        if !fullRescan {
+            var anyChanges = false
+            for libraryPath in paths {
+                guard FileManager.default.fileExists(atPath: libraryPath) else { continue }
+                let url = URL(fileURLWithPath: libraryPath)
+                let lastScannedRows = db.query(sql: "SELECT last_scanned FROM library_paths WHERE path = ?", parameters: [libraryPath])
+                let lastScanned = lastScannedRows.first?["last_scanned"] as? Double ?? 0
+                if lastScanned == 0 {
+                    anyChanges = true
+                    break
+                }
+                let dirs = findChangedDirectories(in: url, since: lastScanned)
+                if !dirs.isEmpty {
+                    anyChanges = true
+                    break
+                }
+            }
+            if !anyChanges {
+                return
+            }
+        }
+
+        updateProgress("Preparing scan...")
 
         // Pre-populate entity caches from database
         cacheLock.lock()
@@ -317,6 +367,9 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
         // Disable FTS triggers during scan — rebuild index at end
         db.disableFTSTriggers()
 
+        // Track which directories were incrementally scanned per library path (for cleanup)
+        var scannedDirsPerPath: [String: Set<String>] = [:]
+
         for libraryPath in paths {
             guard FileManager.default.fileExists(atPath: libraryPath) else {
                 updatePathStatus(path: libraryPath, state: .unavailable)
@@ -326,7 +379,28 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
             let url = URL(fileURLWithPath: libraryPath)
             let isNetwork = Self.isNetworkVolume(path: libraryPath)
             let folderName = url.lastPathComponent
-            updateProgress("Discovering files in \(folderName)...")
+
+            // For incremental scans, only look in directories that changed since last scan
+            var changedDirs: Set<String>?
+            if !fullRescan {
+                let lastScannedRows = db.query(sql: "SELECT last_scanned FROM library_paths WHERE path = ?", parameters: [libraryPath])
+                let lastScanned = lastScannedRows.first?["last_scanned"] as? Double ?? 0
+
+                if lastScanned > 0 {
+                    let dirs = findChangedDirectories(in: url, since: lastScanned)
+                    if dirs.isEmpty {
+                        updatePathStatus(path: libraryPath, state: .complete(trackCount: 0))
+                        continue
+                    }
+                    changedDirs = dirs
+                    updateProgress("Found \(dirs.count) changed folder\(dirs.count == 1 ? "" : "s") in \(folderName)...")
+                } else {
+                    updateProgress("Scanning \(folderName)...")
+                }
+            } else {
+                updateProgress("Scanning \(folderName)...")
+            }
+
             updatePathStatus(path: libraryPath, state: .scanning(processed: 0, total: 0))
 
             // Stream file enumeration — process in batches without collecting all URLs first
@@ -334,9 +408,7 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
             var batchCount = 0
             let batchSize = 500
 
-            db.beginTransaction()
-
-            enumerateAudioFiles(in: url) { fileURL in
+            let processFile: (URL) -> Void = { fileURL in
                 totalDiscovered += 1
 
                 let progressInterval = isNetwork ? 10 : 50
@@ -401,6 +473,17 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
                 }
             }
 
+            db.beginTransaction()
+
+            if let dirs = changedDirs {
+                // Incremental: only scan files in changed directories
+                scannedDirsPerPath[libraryPath] = dirs
+                enumerateAudioFilesInDirectories(dirs, handler: processFile)
+            } else {
+                // Full scan or first scan: enumerate everything
+                enumerateAudioFiles(in: url, handler: processFile)
+            }
+
             // Commit remaining batch
             db.commitTransaction()
 
@@ -417,12 +500,22 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
             updateProgress("Cleaning up removed files...")
             for libraryPath in paths {
                 guard FileManager.default.fileExists(atPath: libraryPath) else { continue }
-                let escapedPath = libraryPath.replacingOccurrences(of: "%", with: "\\%")
-                    .replacingOccurrences(of: "_", with: "\\_")
-                db.execute(sql: """
-                    DELETE FROM tracks WHERE file_path LIKE ? ESCAPE '\\'
-                    AND (last_scan_time IS NULL OR last_scan_time < ?)
-                """, parameters: [escapedPath + "/%", scanStartTime])
+
+                guard let dirs = scannedDirsPerPath[libraryPath], !dirs.isEmpty else {
+                    // No directories were scanned — skip cleanup to avoid deleting untouched tracks
+                    continue
+                }
+                // Incremental: only clean up within changed directories
+                for dir in dirs {
+                    let escapedDir = dir.replacingOccurrences(of: "%", with: "\\%")
+                        .replacingOccurrences(of: "_", with: "\\_")
+                    // Match files directly in this directory (not subdirectories)
+                    db.execute(sql: """
+                        DELETE FROM tracks WHERE file_path LIKE ? ESCAPE '\\'
+                        AND file_path NOT LIKE ? ESCAPE '\\'
+                        AND (last_scan_time IS NULL OR last_scan_time < ?)
+                    """, parameters: [escapedDir + "/%", escapedDir + "/%/%", scanStartTime])
+                }
             }
         }
 
@@ -442,6 +535,9 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
         _composerCache.removeAll()
         _albumCache.removeAll()
         cacheLock.unlock()
+
+        // Back up database to iCloud after successful scan
+        iCloudBackupManager.shared.backupAfterScan()
 
         // Post notification that library was updated
         DispatchQueue.main.async {
@@ -471,6 +567,71 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
             let fileExtension = fileURL.pathExtension.lowercased()
             if supportedExtensions.contains(fileExtension) || fileExtension == "cue" {
                 handler(fileURL)
+            }
+        }
+    }
+
+    /// Find directories whose modification date is newer than the given timestamp.
+    /// This is much faster than enumerating all files — only walks the directory tree.
+    private func findChangedDirectories(in rootURL: URL, since lastScanned: Double) -> Set<String> {
+        let fileManager = FileManager.default
+        var changed = Set<String>()
+
+        guard let enumerator = fileManager.enumerator(
+            at: rootURL,
+            includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else {
+            return changed
+        }
+
+        // Check the root directory itself
+        if let rootAttrs = try? fileManager.attributesOfItem(atPath: rootURL.path),
+           let rootMod = rootAttrs[.modificationDate] as? Date,
+           rootMod.timeIntervalSince1970 > lastScanned {
+            changed.insert(rootURL.path)
+        }
+
+        for case let url as URL in enumerator {
+            guard let resourceValues = try? url.resourceValues(forKeys: [.isDirectoryKey]),
+                  resourceValues.isDirectory == true else {
+                continue
+            }
+
+            if let attrs = try? fileManager.attributesOfItem(atPath: url.path),
+               let modDate = attrs[.modificationDate] as? Date,
+               modDate.timeIntervalSince1970 > lastScanned {
+                changed.insert(url.path)
+            }
+        }
+
+        return changed
+    }
+
+    /// Enumerate audio files only within the specified set of directories (non-recursive, single level)
+    private func enumerateAudioFilesInDirectories(_ directories: Set<String>, handler: (URL) -> Void) {
+        let fileManager = FileManager.default
+
+        for dirPath in directories {
+            let dirURL = URL(fileURLWithPath: dirPath)
+            guard let contents = try? fileManager.contentsOfDirectory(
+                at: dirURL,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ) else {
+                continue
+            }
+
+            for fileURL in contents {
+                guard let resourceValues = try? fileURL.resourceValues(forKeys: [.isRegularFileKey]),
+                      resourceValues.isRegularFile == true else {
+                    continue
+                }
+
+                let ext = fileURL.pathExtension.lowercased()
+                if supportedExtensions.contains(ext) || ext == "cue" {
+                    handler(fileURL)
+                }
             }
         }
     }
@@ -545,7 +706,7 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
                 metadata.sampleRate = Int(sampleRate)
             }
             if let bitrate = audioFile.properties.bitrate {
-                metadata.bitrate = Int(bitrate / 1000)
+                metadata.bitrate = Int(bitrate)
             }
             if let channelCount = audioFile.properties.channelCount {
                 metadata.channelCount = Int(channelCount)
@@ -650,7 +811,8 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
             metadata.sampleRate = Int(sampleRate)
         }
         if let bitrate = properties.bitrate {
-            metadata.bitrate = Int(bitrate / 1000) // Convert to kbps
+            // SFBAudioEngine reports bitrate in kbps already.
+            metadata.bitrate = Int(bitrate)
         }
         if let channelCount = properties.channelCount {
             metadata.channelCount = Int(channelCount)

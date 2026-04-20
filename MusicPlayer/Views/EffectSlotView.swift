@@ -35,14 +35,13 @@ struct EffectSlotView: View {
 
             // Name + manufacturer badge
             VStack(alignment: .leading, spacing: 1) {
-                Text(slot.displayName)
+                Text(humanize(slot.displayName))
                     .font(.system(size: 12, weight: .medium))
-                    .strikethrough(slot.isBypassed)
                     .lineLimit(1)
 
                 Text(slot.manufacturer)
                     .font(.caption2)
-                    .foregroundStyle(slot.slotType == .auPlugin ? Color.blue : Color.orange)
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -62,7 +61,7 @@ struct EffectSlotView: View {
             Button(action: onBypass) {
                 Image(systemName: "power")
                     .font(.caption)
-                    .foregroundStyle(slot.isBypassed ? .secondary : Color.orange)
+                    .foregroundStyle(slot.isBypassed ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.accentColor))
             }
             .buttonStyle(.borderless)
             .help(slot.isBypassed ? "Enable" : "Bypass")
@@ -78,9 +77,30 @@ struct EffectSlotView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(isSelected ? Color.accentColor.opacity(0.1) : Color.clear)
-        .opacity(slot.isBypassed ? 0.6 : 1.0)
+        .background(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
+        .opacity(slot.isBypassed ? 0.45 : 1.0)
         .cornerRadius(6)
+    }
+
+    /// Insert spaces before capital letters in CamelCase strings so
+    /// "AUSoundIsolation" reads as "AU Sound Isolation".
+    private func humanize(_ raw: String) -> String {
+        guard !raw.contains(" ") else { return raw }
+        var result = ""
+        let chars = Array(raw)
+        for (i, c) in chars.enumerated() {
+            if i > 0, c.isUppercase {
+                let prev = chars[i - 1]
+                let next = i + 1 < chars.count ? chars[i + 1] : nil
+                let prevLower = prev.isLowercase
+                let acronymEnd = prev.isUppercase && (next?.isLowercase ?? false)
+                if prevLower || acronymEnd {
+                    result.append(" ")
+                }
+            }
+            result.append(c)
+        }
+        return result
     }
 
     // MARK: - Empty Slot

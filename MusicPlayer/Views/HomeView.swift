@@ -27,15 +27,27 @@ struct HomeView: View {
                     .buttonStyle(.bordered)
                 }
 
+                // Jump back in — horizontal carousel of recently played
+                if !recentlyPlayedAlbums.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        SectionHeader("Jump back in")
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(alignment: .top, spacing: 16) {
+                                ForEach(recentlyPlayedAlbums, id: \.id) { album in
+                                    AlbumGridItem(album: album)
+                                        .frame(width: 170)
+                                }
+                            }
+                            .padding(.horizontal, 4)
+                            .padding(.bottom, 2)
+                        }
+                    }
+                }
+
                 // Sections — only show if populated
                 if !recentAlbums.isEmpty {
                     SectionHeader("New Albums")
                     AlbumGrid(albums: recentAlbums)
-                }
-
-                if !recentlyPlayedAlbums.isEmpty {
-                    SectionHeader("Recently Played")
-                    AlbumGrid(albums: recentlyPlayedAlbums)
                 }
 
                 if !mostPlayedAlbums.isEmpty {
@@ -70,8 +82,8 @@ struct HomeView: View {
         DispatchQueue.global(qos: .userInitiated).async {
             let recent = albumDAO.getRecentlyAdded(limit: 5)
 
-            let recentlyPlayedTracks = playHistoryDAO.getRecentlyPlayed(limit: 20)
-            let recentlyPlayed = getUniqueAlbums(from: recentlyPlayedTracks, limit: 5)
+            let recentlyPlayedTracks = playHistoryDAO.getRecentlyPlayed(limit: 40)
+            let recentlyPlayed = getUniqueAlbums(from: recentlyPlayedTracks, limit: 10)
 
             let mostPlayedTracks = playHistoryDAO.getMostPlayed(limit: 20)
             let mostPlayed = getUniqueAlbums(from: mostPlayedTracks, limit: 5)

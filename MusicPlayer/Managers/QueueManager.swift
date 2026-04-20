@@ -213,6 +213,19 @@ class QueueManager: ObservableObject {
             }
         }
 
+        // Update shuffle history: remove references to the deleted index
+        // and adjust indices that shifted down
+        if _isShuffleEnabled && !shuffleHistory.isEmpty {
+            shuffleHistory = shuffleHistory.compactMap { histIndex in
+                if histIndex == index { return nil }
+                return histIndex > index ? histIndex - 1 : histIndex
+            }
+            // Ensure current index is in history
+            if !shuffleHistory.isEmpty && _currentIndex >= 0 && !shuffleHistory.contains(_currentIndex) {
+                shuffleHistory.append(_currentIndex)
+            }
+        }
+
         if _queue.isEmpty {
             _currentIndex = -1
             _originalQueue = []

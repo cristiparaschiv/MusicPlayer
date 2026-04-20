@@ -19,7 +19,7 @@ enum StatsPeriod: String, CaseIterable {
 }
 
 struct StatsView: View {
-    @State private var period: StatsPeriod = .month
+    @State private var period: StatsPeriod = .year
     @State private var totalTracks: Int = 0
     @State private var totalListeningTime: TimeInterval = 0
     @State private var tracksPlayed: Int = 0
@@ -55,10 +55,8 @@ struct StatsView: View {
                 // Overview Cards
                 overviewCards
 
-                // Activity Chart
-                if !dailyActivity.isEmpty {
-                    activityChart
-                }
+                // Activity Heatmap — always render, graceful when empty
+                activityHeatmap
 
                 // Top sections
                 HStack(alignment: .top, spacing: 20) {
@@ -110,32 +108,47 @@ struct StatsView: View {
         .cornerRadius(8)
     }
 
-    // MARK: - Activity Chart
+    // MARK: - Activity Heatmap (GitHub-style 365-day grid)
 
-    private var activityChart: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Daily Activity")
-                .font(.headline)
-
-            Chart(dailyActivity, id: \.date) { entry in
-                BarMark(
-                    x: .value("Date", entry.date, unit: .day),
-                    y: .value("Plays", entry.count)
-                )
-                .foregroundStyle(.orange.gradient)
-                .cornerRadius(2)
-            }
-            .chartXAxis {
-                AxisMarks(values: .stride(by: .day, count: period == .week ? 1 : (period == .month ? 5 : 30))) { _ in
-                    AxisValueLabel(format: .dateTime.month(.abbreviated).day())
-                    AxisGridLine()
+    private var activityHeatmap: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Daily Activity")
+                    .font(.headline)
+                Spacer()
+                if dailyActivity.isEmpty {
+                    Text("No plays yet")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    heatmapLegend
                 }
             }
-            .frame(height: 180)
+
+            ActivityHeatmapGrid(
+                dailyActivity: dailyActivity,
+                endDate: Date()
+            )
         }
         .padding()
         .background(Color(nsColor: .controlBackgroundColor))
         .cornerRadius(8)
+    }
+
+    private var heatmapLegend: some View {
+        HStack(spacing: 4) {
+            Text("Less")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            ForEach(0..<5) { level in
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(ActivityHeatmapGrid.color(forLevel: level))
+                    .frame(width: 10, height: 10)
+            }
+            Text("More")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
     }
 
     // MARK: - Top Artists
@@ -188,6 +201,9 @@ struct StatsView: View {
 
             if topGenres.isEmpty {
                 emptyStateView(icon: "guitars", message: "Genre stats appear as you listen")
+            } else if topGenres.count < 2 {
+                // Not enough variance to make a donut meaningful — list only.
+                EmptyView()
             } else {
                 Chart(topGenres.prefix(8), id: \.name) { genre in
                     SectorMark(
@@ -301,6 +317,8 @@ struct StatsView: View {
         return "\(minutes)m"
     }
 
+    // MARK: - Heatmap grid view
+
     private func loadStats() {
         isLoading = true
         let since = period.startDate
@@ -326,4 +344,116 @@ struct StatsView: View {
             }
         }
     }
+}
+
+// MARK: - Activity Heatmap Grid
+
+/// GitHub-style calendar heatmap covering the 52 weeks ending at `endDate`.
+struct ActivityHeatmapGrid: View {
+    let dailyActivity: [DailyPlayCount]
+    let endDate: Date
+
+    private let weeks = 53
+    private let cellSize: CGFloat = 11
+    private let cellSpacing: CGFloat = 3
+
+    /// Map of startOfDay → play count, for O(1) lookup.
+    private var countsByDay: [Date: Int] {
+        var map: [Date: Int] = [:]
+        let calendar = Calendar.current
+        for entry in dailyActivity {
+            map[calendar.startOfDay(for: entry.date)] = entry.count
+        }
+        return map
+    }
+
+    /// Max count in the window — used to bucket intensities.
+    private var maxCount: Int {
+        max(dailyActivity.map(\.count).max() ?? 0, 1)
+    }
+
+    var body: some View {
+        let counts = countsByDay
+        let calendar = Calendar.current
+        // Align to the start of the week containing endDate so columns are weeks.
+        let endStart = calendar.startOfDay(for: endDate)
+        let weekday = calendar.component(.weekday, from: endStart) - 1 // 0=Sun
+        let lastColumnStart = calendar.date(byAdding: .day, value: -weekday, to: endStart) ?? endStart
+        let firstColumnStart = calendar.date(byAdding: .weekOfYear, value: -(weeks - 1), to: lastColumnStart) ?? endStart
+
+        return HStack(alignment: .top, spacing: cellSpacing) {
+            // Day-of-week labels (Mon/Wed/Fri)
+            VStack(alignment: .trailing, spacing: cellSpacing) {
+                ForEach(0..<7, id: \.self) { day in
+                    Text(dayLabel(day))
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                        .frame(height: cellSize)
+                }
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: cellSpacing) {
+                    ForEach(0..<weeks, id: \.self) { weekIndex in
+                        VStack(spacing: cellSpacing) {
+                            ForEach(0..<7, id: \.self) { dayIndex in
+                                let day = calendar.date(
+                                    byAdding: .day,
+                                    value: weekIndex * 7 + dayIndex,
+                                    to: firstColumnStart
+                                ) ?? firstColumnStart
+                                cell(for: day, count: counts[day] ?? 0, inRange: day <= endStart)
+                            }
+                        }
+                    }
+                }
+                .padding(.vertical, 1)
+            }
+        }
+    }
+
+    private func cell(for day: Date, count: Int, inRange: Bool) -> some View {
+        let level = inRange ? Self.level(count: count, max: maxCount) : -1
+        return RoundedRectangle(cornerRadius: 2)
+            .fill(level < 0 ? Color.clear : Self.color(forLevel: level))
+            .frame(width: cellSize, height: cellSize)
+            .help(inRange ? "\(count) \(count == 1 ? "play" : "plays") · \(Self.dateFormatter.string(from: day))" : "")
+    }
+
+    private func dayLabel(_ day: Int) -> String {
+        switch day {
+        case 1: return "Mon"
+        case 3: return "Wed"
+        case 5: return "Fri"
+        default: return ""
+        }
+    }
+
+    /// Bucket a count into 0..4 based on the window's max.
+    static func level(count: Int, max: Int) -> Int {
+        guard count > 0 else { return 0 }
+        let ratio = Double(count) / Double(max)
+        switch ratio {
+        case ..<0.25: return 1
+        case ..<0.5: return 2
+        case ..<0.75: return 3
+        default: return 4
+        }
+    }
+
+    static func color(forLevel level: Int) -> Color {
+        switch level {
+        case 1: return Color.accentColor.opacity(0.25)
+        case 2: return Color.accentColor.opacity(0.5)
+        case 3: return Color.accentColor.opacity(0.75)
+        case 4: return Color.accentColor
+        default: return Color.secondary.opacity(0.12)
+        }
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        return f
+    }()
 }

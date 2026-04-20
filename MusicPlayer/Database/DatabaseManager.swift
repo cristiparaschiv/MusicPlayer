@@ -13,6 +13,8 @@ class DatabaseManager {
     private init() {
         openDatabase()
         createTables()
+        // Ensure FTS triggers exist — they may be missing if a previous scan was interrupted
+        enableFTSTriggers()
     }
 
     private func openDatabase() {
@@ -810,6 +812,16 @@ class DatabaseManager {
             let duration = _query(sql: "SELECT SUM(duration) as total FROM tracks").first?["total"] as? Double ?? 0
 
             return (Int(trackCount), Int(albumCount), Int(artistCount), duration)
+        }
+    }
+
+    /// Close the database connection (e.g. before restoring a backup)
+    func close() {
+        dbQueue.sync {
+            if db != nil {
+                sqlite3_close(db)
+                db = nil
+            }
         }
     }
 

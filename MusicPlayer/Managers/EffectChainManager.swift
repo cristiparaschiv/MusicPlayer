@@ -196,11 +196,35 @@ final class EffectChainManager: ObservableObject {
         }
 
         // Wire: source → first → … → last → mixer
-        engine.connect(sourceNode, to: nodes[0], format: format)
-        for i in 0..<(nodes.count - 1) {
-            engine.connect(nodes[i], to: nodes[i + 1], format: format)
+        // Try connecting with the source format. If an AU effect doesn't support it
+        // (e.g. hi-res 24-bit/96kHz), catch the ObjC exception and bypass the chain.
+        do {
+            try ObjCExceptionCatcher.try {
+                engine.connect(sourceNode, to: nodes[0], format: format)
+                for i in 0..<(nodes.count - 1) {
+                    engine.connect(nodes[i], to: nodes[i + 1], format: format)
+                }
+                engine.connect(nodes.last!, to: engine.mainMixerNode, format: format)
+            }
+        } catch {
+            #if DEBUG
+            print("[EffectChain] Format not supported by effect nodes, bypassing chain: \(error)")
+            #endif
+            // Clean up: safely detach effect nodes (some may not have been attached)
+            for node in nodes {
+                _ = try? ObjCExceptionCatcher.try {
+                    engine.disconnectNodeInput(node)
+                    engine.disconnectNodeOutput(node)
+                    engine.detach(node)
+                }
+            }
+            // Also remove slot references so teardown doesn't try to detach them again
+            for slot in activeSlots {
+                slot.removeNode(for: engine)
+            }
+            engine.connect(sourceNode, to: engine.mainMixerNode, format: format)
+            return nil
         }
-        engine.connect(nodes.last!, to: engine.mainMixerNode, format: format)
 
         return nodes[0]
     }
@@ -259,11 +283,29 @@ final class EffectChainManager: ObservableObject {
                 return
             }
 
-            engine.connect(sourceNode, to: nodes[0], format: format)
-            for i in 0..<(nodes.count - 1) {
-                engine.connect(nodes[i], to: nodes[i + 1], format: format)
+            do {
+                try ObjCExceptionCatcher.try {
+                    engine.connect(sourceNode, to: nodes[0], format: format)
+                    for i in 0..<(nodes.count - 1) {
+                        engine.connect(nodes[i], to: nodes[i + 1], format: format)
+                    }
+                    engine.connect(nodes.last!, to: engine.mainMixerNode, format: format)
+                }
+            } catch {
+                #if DEBUG
+                print("[EffectChain] Async: format not supported, bypassing chain: \(error)")
+                #endif
+                for node in nodes {
+                    _ = try? ObjCExceptionCatcher.try {
+                        engine.disconnectNodeInput(node)
+                        engine.disconnectNodeOutput(node)
+                        engine.detach(node)
+                    }
+                }
+                engine.connect(sourceNode, to: engine.mainMixerNode, format: format)
+                completion(nil)
+                return
             }
-            engine.connect(nodes.last!, to: engine.mainMixerNode, format: format)
 
             completion(nodes[0])
         }
@@ -277,9 +319,11 @@ final class EffectChainManager: ObservableObject {
 
         for slot in currentSlots.compactMap({ $0 }) {
             if let node = slot.node(for: engine) {
-                engine.disconnectNodeInput(node)
-                engine.disconnectNodeOutput(node)
-                engine.detach(node)
+                _ = try? ObjCExceptionCatcher.try {
+                    engine.disconnectNodeInput(node)
+                    engine.disconnectNodeOutput(node)
+                    engine.detach(node)
+                }
             }
             slot.removeNode(for: engine)
         }

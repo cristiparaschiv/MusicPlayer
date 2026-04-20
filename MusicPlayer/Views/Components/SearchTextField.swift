@@ -4,6 +4,7 @@ import AppKit
 struct SearchTextField: NSViewRepresentable {
     @Binding var text: String
     var placeholder: String
+    var onSubmit: (() -> Void)?
 
     func makeNSView(context: Context) -> NSSearchField {
         let searchField = NSSearchField()
@@ -43,6 +44,10 @@ struct SearchTextField: NSViewRepresentable {
                 parent.text = ""
                 (control as? NSSearchField)?.stringValue = ""
                 control.window?.makeFirstResponder(nil)
+                return true
+            }
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                parent.onSubmit?()
                 return true
             }
             return false

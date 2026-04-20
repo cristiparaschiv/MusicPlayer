@@ -28,6 +28,11 @@ struct SettingsView: View {
     @State private var isConnectingLastFM: Bool = false
     @State private var showVerifySheet: Bool = false
     @State private var showRemoteControl: Bool = false
+    @State private var showRestoreBackup: Bool = false
+    @State private var iCloudBackups: [BackupInfo] = []
+    @State private var showRestoreConfirm: Bool = false
+    @State private var selectedBackup: BackupInfo?
+    @State private var iCloudBackupStatus: String?
 
     @ObservedObject private var audioOutputManager = AudioOutputManager.shared
     @ObservedObject private var scanner = MediaScannerManager.shared
@@ -525,46 +530,143 @@ struct SettingsView: View {
 
             Divider()
 
-            // Action buttons
-            HStack(spacing: 12) {
-                Button(action: removeSelectedPaths) {
-                    Label("Remove Selected", systemImage: Icons.minusCircleFill)
-                }
-                .buttonStyle(.bordered)
-                .disabled(selectedPaths.isEmpty)
+            VStack(spacing: 8) {
+                // Row 1: Folder management
+                HStack(spacing: 12) {
+                    Button(action: removeSelectedPaths) {
+                        Label("Remove Selected", systemImage: Icons.minusCircleFill)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(selectedPaths.isEmpty)
 
-                Spacer()
+                    Button(action: updateFolderAccess) {
+                        Label("Update Folder Access", systemImage: "lock.open")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(libraryPaths.isEmpty)
+                    .help("Re-authorize folders to enable metadata editing")
 
-                Button(action: scanForChanges) {
-                    Label("Scan for Changes", systemImage: Icons.arrowClockwise)
-                }
-                .buttonStyle(.bordered)
-                .disabled(libraryPaths.isEmpty || isScanning)
+                    Spacer()
 
-                Button(action: fullRescan) {
-                    Label("Full Rescan", systemImage: Icons.arrowClockwise)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(libraryPaths.isEmpty || isScanning)
+                    Button(action: scanForChanges) {
+                        Label("Scan for Changes", systemImage: Icons.arrowClockwise)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(libraryPaths.isEmpty || isScanning)
 
-                Button(action: { showVerifySheet = true }) {
-                    Label("Verify Library", systemImage: "checkmark.shield")
-                }
-                .buttonStyle(.bordered)
-                .disabled(libraryPaths.isEmpty)
+                    Button(action: fullRescan) {
+                        Label("Full Rescan", systemImage: Icons.arrowClockwise)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(libraryPaths.isEmpty || isScanning)
 
-                Button(action: updateFolderAccess) {
-                    Label("Update Folder Access", systemImage: "lock.open")
+                    Button(action: { showVerifySheet = true }) {
+                        Label("Verify Library", systemImage: "checkmark.shield")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(libraryPaths.isEmpty)
                 }
-                .buttonStyle(.bordered)
-                .disabled(libraryPaths.isEmpty)
-                .help("Re-authorize folders to enable metadata editing")
+
+                // Row 2: iCloud backup
+                if iCloudBackupManager.shared.isAvailable {
+                    HStack(spacing: 12) {
+                        Spacer()
+
+                        Button(action: {
+                            iCloudBackupManager.shared.backupAfterScan()
+                            iCloudBackupStatus = "Backing up..."
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                iCloudBackupStatus = nil
+                            }
+                        }) {
+                            Label(iCloudBackupStatus ?? "Backup to iCloud", systemImage: "icloud.and.arrow.up")
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button(action: {
+                            iCloudBackups = iCloudBackupManager.shared.listBackups()
+                            showRestoreBackup = true
+                        }) {
+                            Label("Restore from iCloud", systemImage: "icloud.and.arrow.down")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
             }
             .padding()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .sheet(isPresented: $showVerifySheet) {
             LibraryVerifierView()
+        }
+        .sheet(isPresented: $showRestoreBackup) {
+            iCloudBackupSheet
+        }
+    }
+
+    private var iCloudBackupSheet: some View {
+        VStack(spacing: 16) {
+            Text("iCloud Backups")
+                .font(.headline)
+
+            if iCloudBackups.isEmpty {
+                Text("No backups found in iCloud.")
+                    .foregroundStyle(.secondary)
+                    .padding()
+            } else {
+                List(iCloudBackups) { backup in
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(backup.formattedDate)
+                                .font(.body)
+                            Text(backup.formattedSize)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Restore") {
+                            selectedBackup = backup
+                            showRestoreConfirm = true
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+                .frame(minHeight: 150)
+            }
+
+            HStack {
+                Button("Cancel") {
+                    showRestoreBackup = false
+                }
+                .keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding()
+        .frame(width: 400)
+        .alert("Restore Backup?", isPresented: $showRestoreConfirm) {
+            Button("Restore", role: .destructive) {
+                if let backup = selectedBackup {
+                    let success = iCloudBackupManager.shared.restore(from: backup)
+                    showRestoreBackup = false
+                    if success {
+                        // Show restart prompt
+                        DispatchQueue.main.async {
+                            let alert = NSAlert()
+                            alert.messageText = "Backup Restored"
+                            alert.informativeText = "The database has been restored. Please restart the app for changes to take effect."
+                            alert.alertStyle = .informational
+                            alert.addButton(withTitle: "Restart Now")
+                            alert.addButton(withTitle: "Later")
+                            if alert.runModal() == .alertFirstButtonReturn {
+                                NSApplication.shared.terminate(nil)
+                            }
+                        }
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will replace your current library database with the backup. This cannot be undone.")
         }
     }
     
