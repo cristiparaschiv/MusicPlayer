@@ -403,6 +403,10 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
 
             updatePathStatus(path: libraryPath, state: .scanning(processed: 0, total: 0))
 
+            // Pre-pass: find audio files referenced by single-file CUE sheets so we
+            // can skip indexing them as standalone tracks (they become virtual #trackNN rows).
+            let cueReferencedAudioPaths = collectCUEReferencedAudioPaths(root: url, changedDirs: changedDirs)
+
             // Stream file enumeration — process in batches without collecting all URLs first
             var totalDiscovered = 0
             var batchCount = 0
@@ -426,6 +430,12 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
                         self.processCUEFile(fileURL)
                         db.execute(sql: "UPDATE tracks SET last_scan_time = ? WHERE file_path LIKE ?",
                                    parameters: [scanStartTime, filePath + "%"])
+                        return
+                    }
+
+                    // Skip audio files that are referenced by a single-file CUE sheet —
+                    // the CUE handler inserts virtual tracks for them.
+                    if cueReferencedAudioPaths.contains(filePath) {
                         return
                     }
 
@@ -641,6 +651,13 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
     private func processCUEFile(_ cueURL: URL) {
         guard let sheet = CUEParser.parse(url: cueURL) else { return }
 
+        // Multi-file CUE (one FILE entry per track) can't be split by offset —
+        // each track starts at 00:00:00 of its own file. Let the regular per-file
+        // scanner index those files directly instead of producing zero-duration virtual tracks.
+        if sheet.isMultiFile {
+            return
+        }
+
         let cueDir = cueURL.deletingLastPathComponent()
         var audioURL = cueDir.appendingPathComponent(sheet.audioFileName)
 
@@ -700,6 +717,10 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
             metadata.formatName = audioURL.pathExtension.uppercased()
             metadata.startTime = cueTrack.startTime
             metadata.endTime = endTime
+            if let dateStr = cueTrack.date ?? sheet.date {
+                metadata.year = extractYear(from: dateStr)
+            }
+            metadata.genre = cueTrack.genre ?? sheet.genre
 
             // Get technical properties from the audio file
             if let sampleRate = audioFile.properties.sampleRate {
@@ -845,6 +866,57 @@ class MediaScannerManager: ObservableObject, EntityCacheProvider {
         }
 
         return nil
+    }
+
+    /// Pre-scan for CUE files and return the set of audio file paths they reference (single-file CUEs only).
+    /// These files will be skipped during the main scan since they're represented as virtual #trackNN rows.
+    private func collectCUEReferencedAudioPaths(root: URL, changedDirs: Set<String>?) -> Set<String> {
+        var result: Set<String> = []
+        let fm = FileManager.default
+
+        let collect: (URL) -> Void = { cueURL in
+            guard let sheet = CUEParser.parse(url: cueURL) else { return }
+            if sheet.isMultiFile { return }
+            let cueDir = cueURL.deletingLastPathComponent()
+            var audioURL = cueDir.appendingPathComponent(sheet.audioFileName)
+            if !fm.fileExists(atPath: audioURL.path) {
+                if let fallback = self.findAudioFileForCUE(
+                    in: cueDir,
+                    cueFileName: cueURL.deletingPathExtension().lastPathComponent
+                ) {
+                    audioURL = fallback
+                } else {
+                    return
+                }
+            }
+            result.insert(audioURL.path)
+        }
+
+        if let dirs = changedDirs {
+            for dirPath in dirs {
+                let dirURL = URL(fileURLWithPath: dirPath)
+                guard let contents = try? fm.contentsOfDirectory(
+                    at: dirURL,
+                    includingPropertiesForKeys: [.isRegularFileKey],
+                    options: [.skipsHiddenFiles]
+                ) else { continue }
+                for url in contents where url.pathExtension.lowercased() == "cue" {
+                    collect(url)
+                }
+            }
+        } else {
+            guard let enumerator = fm.enumerator(
+                at: root,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            ) else { return result }
+            for case let url as URL in enumerator {
+                if url.pathExtension.lowercased() == "cue" {
+                    collect(url)
+                }
+            }
+        }
+        return result
     }
 
     /// Find a matching audio file for a CUE sheet when the referenced filename doesn't exist

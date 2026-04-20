@@ -6,13 +6,22 @@ struct CUETrack {
     let performer: String?
     let startTime: TimeInterval // in seconds
     let audioFileName: String
+    let date: String?
+    let genre: String?
 }
 
 struct CUESheet {
     let audioFileName: String
     let performer: String?
     let title: String?
+    let date: String?
+    let genre: String?
     let tracks: [CUETrack]
+
+    /// True if tracks reference more than one distinct audio file
+    var isMultiFile: Bool {
+        Set(tracks.map { $0.audioFileName }).count > 1
+    }
 }
 
 class CUEParser {
@@ -35,10 +44,14 @@ class CUEParser {
         var globalFile: String?
         var globalPerformer: String?
         var globalTitle: String?
+        var globalDate: String?
+        var globalGenre: String?
         var currentTrackNumber: Int?
         var currentTitle: String?
         var currentPerformer: String?
         var currentFile: String?
+        var currentDate: String?
+        var currentGenre: String?
         var tracks: [CUETrack] = []
 
         for line in lines {
@@ -63,16 +76,24 @@ class CUEParser {
                 } else {
                     currentTitle = title
                 }
+            } else if trimmed.hasPrefix("REM ") {
+                let rest = String(trimmed.dropFirst(4)).trimmingCharacters(in: .whitespaces)
+                if rest.uppercased().hasPrefix("DATE ") {
+                    let value = extractRemValue(from: rest, command: "DATE")
+                    if currentTrackNumber == nil { globalDate = value } else { currentDate = value }
+                } else if rest.uppercased().hasPrefix("GENRE ") {
+                    let value = extractRemValue(from: rest, command: "GENRE")
+                    if currentTrackNumber == nil { globalGenre = value } else { currentGenre = value }
+                }
             } else if trimmed.hasPrefix("TRACK ") {
-                // Save previous track if exists
-                // (INDEX will be parsed next)
-
                 // Start new track
                 let parts = trimmed.split(separator: " ")
                 if parts.count >= 2, let num = Int(parts[1]) {
                     currentTrackNumber = num
                     currentTitle = nil
                     currentPerformer = nil
+                    currentDate = nil
+                    currentGenre = nil
                 }
             } else if trimmed.hasPrefix("INDEX 01 ") {
                 // This is the main start index
@@ -87,7 +108,9 @@ class CUEParser {
                     title: currentTitle ?? "Track \(trackNum)",
                     performer: currentPerformer ?? globalPerformer,
                     startTime: time,
-                    audioFileName: file
+                    audioFileName: file,
+                    date: currentDate ?? globalDate,
+                    genre: currentGenre ?? globalGenre
                 ))
             }
         }
@@ -100,6 +123,8 @@ class CUEParser {
             audioFileName: audioFile,
             performer: globalPerformer,
             title: globalTitle,
+            date: globalDate,
+            genre: globalGenre,
             tracks: tracks
         )
     }
@@ -132,5 +157,18 @@ class CUEParser {
 
         // No quotes — take first word
         return afterCommand.split(separator: " ").first.map(String.init)
+    }
+
+    /// Extract value from a REM line. e.g. `DATE 1974` → `1974`, `GENRE "Prog Rock"` → `Prog Rock`
+    private static func extractRemValue(from line: String, command: String) -> String? {
+        let afterCommand = String(line.dropFirst(command.count)).trimmingCharacters(in: .whitespaces)
+        if afterCommand.hasPrefix("\"") {
+            let content = String(afterCommand.dropFirst())
+            if let endQuote = content.firstIndex(of: "\"") {
+                return String(content[content.startIndex..<endQuote])
+            }
+            return content
+        }
+        return afterCommand.isEmpty ? nil : afterCommand
     }
 }
