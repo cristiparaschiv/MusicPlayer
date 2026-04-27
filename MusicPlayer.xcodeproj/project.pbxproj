@@ -302,6 +302,10 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lchromaprint",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.cristip.OrangeMusicPlayer;
 				PRODUCT_NAME = "Orange Music Player";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -348,6 +352,10 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lchromaprint",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.cristip.OrangeMusicPlayer;
 				PRODUCT_NAME = "Orange Music Player";
 				PROVISIONING_PROFILE_SPECIFIER = "";
